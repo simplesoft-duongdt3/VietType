@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<rect x="2" y="2" width="60" height="60" rx="12" fill="#2e7cf6"/>
+<text x="32" y="40" font-family="Sans" font-size="24" font-weight="bold" fill="white" text-anchor="middle">VIE</text>
+<rect x="14" y="46" width="36" height="3" rx="1.5" fill="white" opacity="0.85"/>
+</svg>

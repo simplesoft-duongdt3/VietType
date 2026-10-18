@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=VietType
+Comment=Khung gõ Telex nhỏ, luôn trên cùng, hiện top bar
+Exec=/usr/bin/python3 /opt/viettype/viettype_app.py
+Icon=/opt/viettype/viettype.svg
+StartupWMClass=VietType
+StartupNotify=true
+Terminal=false
+Categories=Utility;TextTools;
+Keywords=telex;vietnamese;tieng viet;go tieng viet;
