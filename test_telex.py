@@ -26,6 +26,12 @@ cases = [
     # gõ lặp d/a/e/o: ddd -> dd, aaa -> aa, ấ+a -> áa
     ("ddd", "dd"), ("DDD", "DD"), ("aaa", "aa"), ("eee", "ee"), ("ooo", "oo"),
     ("aasa", "áa"),
+    # cặp uo: nguoiw -> ngươi (và các ca tương tự)
+    ("nguoiw", "ngươi"), ("nguoiwf", "người"), ("nguoiww", "nguoiw"),
+    ("tuoiw", "tươi"), ("cuoiwf", "cười"), ("cuoiwj", "cượi"), ("muoiwf", "mười"),
+    ("tuoiws", "tưới"), ("tuoiwr", "tưởi"), ("tuoiwx", "tưỡi"),
+    ("nguoiws", "ngưới"), ("nguoiwx", "ngưỡi"), ("ruouw", "rươu"),
+    ("uow", "ươ"), ("NGUOIW", "NGƯƠI"),
 ]
 fails = 0
 for raw, exp in cases:

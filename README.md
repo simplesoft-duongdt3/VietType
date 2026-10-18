@@ -1,10 +1,10 @@
-# VietType v1.3.0 — Khung gõ Telex nhỏ gọn cho Ubuntu / Compact Telex Pad for Ubuntu
+# VietType v1.6.9 — Khung gõ Telex nhỏ gọn cho Ubuntu / Compact Telex Pad for Ubuntu
 
 > **Tiếng Việt:** VietType là một khung nhập liệu nhỏ, luôn sẵn sàng trên Ubuntu — gõ Telex trực tiếp (live), quản lý câu mẫu bằng chips, copy/chèn nhanh, luôn trên cùng, hiện icon trên top bar và tự khởi động cùng hệ thống.
 >
 > **English:** VietType is a small always-ready input pad for Ubuntu — live Telex typing, chip-based snippet templates, one-click copy/insert, always-on-top, top-bar indicator, and autostart support.
 
-![Platform](https://img.shields.io/badge/platform-Ubuntu%2024%2F26-blue) ![Toolkit](https://img.shields.io/badge/GTK-3-orange) ![Engine](https://img.shields.io/badge/Telex-GoTV%2FOpenKey--style-green) ![Version](https://img.shields.io/badge/version-1.3.0-brightgreen)
+![Platform](https://img.shields.io/badge/platform-Ubuntu%2024%2F26-blue) ![Toolkit](https://img.shields.io/badge/GTK-3-orange) ![Engine](https://img.shields.io/badge/Telex-GoTV%2FOpenKey--style-green) ![Version](https://img.shields.io/badge/version-1.6.9-brightgreen)
 
 ---
 
@@ -20,7 +20,7 @@ VietType is a lightweight Vietnamese input pad. Instead of switching system-wide
 |---|---|
 | Live Telex input | Type `as` → `á` directly in the text area; toggle Telex ON/OFF (OFF = plain ASCII). Repeat-key undo in GoTV/OpenKey style (`ww` → `w`, `ass` → `as`). **ESC** undoes the last applied mark (50-step history). |
 | Template chips | Each template has an **abbreviation** shown on the chip and a **content** body. Horizontal scroll, unlimited count, drag-and-drop reorder. **Click** = copy content • **Double-click** = insert at cursor • Right-click = insert / copy / edit / move / delete. The **+** button adds a new template (abbreviation + content, auto-suggested). Stored in `~/.config/viettype/samples.json`; legacy plain-string lists auto-migrate. |
-| Window behavior | Always-on-top toggle (`Top`), fade toggle (`Mờ` — 70% opacity), hide-to-tray (`Ẩn`). Drag from the background/status strip, or **Alt + drag anywhere** (text area, chips, buttons). Default size 320×270, freely resizable. |
+| Window behavior | Header shows the full name with 4 compact icon buttons (pin-on-top, fade, hide-to-tray, dark/light theme). The Telex switch sits in the control row next to Copy / Clear (icon + text). Theme choice is remembered. Drag the status strip, or **Alt + drag anywhere** (text area, chips, buttons) — window borders always resize normally. Default size 320×270, freely resizable, size/position restored on launch. |
 | System integration | Top-bar indicator (Ayatana AppIndicator): show/hide, Telex, fade, autostart, about, quit. Dock icon via `StartupWMClass` + SVG icon. Optional autostart on login. Version shown in header subtitle, About dialog, and `--version`. |
 | Offline & private | Pure local Python, no network, no keylogger-style hooks. |
 
@@ -33,6 +33,7 @@ VietType is a lightweight Vietnamese input pad. Instead of switching system-wide
 | `dd` / `DD` | `đ` / `Đ` |
 | `s` `f` `r` `x` `j` | sắc huyền hỏi ngã nặng |
 | `z` | remove tone, then strip `ă â ê ô ơ ư đ` |
+| `uoi` / `uou` + `w` | `ươi` / `ươu` (e.g. `nguoiw` → `ngươi`, `tuoiw` → `tươi`, `ruou` + `w` → `rươu`); + `s/f/r/x/j` puts the tone on `ơ` (`ngưới`, `người`, `ngưởi`, `ngưỡi`, `ngượi`) |
 | repeat key (undo) | `ww` → `w`, `tư` + `w` → `tw`, `aw` + `w` → `aw` |
 | repeat key (undo) | `ass` → `as` (another `s` → `ás`), `ddd` → `dd`, `aaa` → `aa` |
 | undo keeps tone | `ấ` + `a` → `áa` |
@@ -81,7 +82,7 @@ Autostart can also be toggled inside the app (checkbox at the bottom, or the ind
 VietType/
 ├── viettype_app.py    # GTK3 UI: pad, chips, tray, autostart, drag, ESC-undo
 ├── telex_engine.py    # Stateless Telex engine (live key-by-key conversion)
-├── test_telex.py      # 42 engine test cases (run: /usr/bin/python3 test_telex.py)
+├── test_telex.py      # 57 engine test cases (run: /usr/bin/python3 test_telex.py)
 ├── viettype.svg       # App/dock icon
 ├── viettype.desktop   # Launcher (StartupWMClass=VietType)
 ├── install.sh         # Full installer
@@ -112,7 +113,7 @@ VietType là khung nhập liệu tiếng Việt gọn nhẹ. Thay vì chuyển b
 |---|---|
 | Gõ Telex trực tiếp | Gõ `as` → `á` ngay trong ô nhập; công tắc Telex BẬT/TẮT (TẮT = gõ không dấu). Gõ lặp phím để hoàn tác kiểu GoTV/OpenKey (`ww` → `w`, `ass` → `as`). Phím **ESC** hoàn tác dấu vừa gõ (lịch sử 50 bước). |
 | Chips mẫu câu | Mỗi mẫu gồm **viết tắt** (hiện trên chip) và **nội dung**. Cuộn ngang không giới hạn, kéo-thả sắp xếp. **Click** = copy • **Đúp** = chèn vào con trỏ • Chuột phải = chèn / copy / sửa / dời / xoá. Nút **+** thêm mẫu mới (tự gợi ý viết tắt). Lưu tại `~/.config/viettype/samples.json`; dữ liệu mẫu cũ (list chuỗi) tự chuyển sang dạng mới. |
-| Cửa sổ | `Top` = luôn trên cùng, `Mờ` = trong suốt 70%, `Ẩn` = thu xuống khay. Kéo từ nền/thanh trạng thái, hoặc giữ **Alt + kéo ở mọi nơi**. Mặc định 320×270, co giãn tự do. |
+| Cửa sổ | Header hiện tên đầy đủ với 4 nút icon gọn (ghim, mờ, ẩn, sáng/tối). Công tắc Telex nằm ở hàng điều khiển cạnh Copy / Xoá (icon + chữ). Chế độ sáng/tối được nhớ. Kéo thanh trạng thái, hoặc giữ **Alt + kéo ở mọi nơi** — viền cửa sổ luôn co giãn bình thường. Mặc định 320×270, co giãn tự do, nhớ kích thước/vị trí lần trước. |
 | Tích hợp hệ thống | Icon top bar (Ayatana AppIndicator): hiện/ẩn, Telex, mờ, autostart, giới thiệu, thoát. Icon dock qua `StartupWMClass` + SVG. Tuỳ chọn tự chạy khi đăng nhập. Phiên bản hiện ở subtitle, hộp Giới thiệu và `--version`. |
 | Riêng tư | Python thuần, chạy offline hoàn toàn, không hook bàn phím toàn cục. |
 
@@ -125,6 +126,7 @@ VietType là khung nhập liệu tiếng Việt gọn nhẹ. Thay vì chuyển b
 | `dd` / `DD` | `đ` / `Đ` |
 | `s` `f` `r` `x` `j` | sắc huyền hỏi ngã nặng |
 | `z` | xoá dấu thanh, rồi bóc `ă â ê ô ơ ư đ` |
+| `uoi` / `uou` + `w` | `ươi` / `ươu` (vd `nguoiw` → `ngươi`, `tuoiw` → `tươi`, `ruou` + `w` → `rươu`); + `s/f/r/x/j` đặt dấu lên `ơ` (`ngưới`, `người`, `ngưởi`, `ngưỡi`, `ngượi`) |
 | gõ lặp (hoàn tác) | `ww` → `w`, `tư` + `w` → `tw`, `aw` + `w` → `aw` |
 | gõ lặp (hoàn tác) | `ass` → `as` (thêm `s` nữa → `ás`), `ddd` → `dd`, `aaa` → `aa` |
 | hoàn tác giữ dấu | `ấ` + `a` → `áa` |
@@ -173,7 +175,7 @@ Cũng có thể bật/tắt autostart ngay trong app (checkbox cuối cửa sổ
 VietType/
 ├── viettype_app.py    # Giao diện GTK3: ô nhập, chips, tray, autostart, kéo thả, ESC
 ├── telex_engine.py    # Engine Telex stateless (biến đổi từng phím live)
-├── test_telex.py      # 42 case kiểm thử (chạy: /usr/bin/python3 test_telex.py)
+├── test_telex.py      # 57 case kiểm thử (chạy: /usr/bin/python3 test_telex.py)
 ├── viettype.svg       # Icon app/dock
 ├── viettype.desktop   # Launcher (StartupWMClass=VietType)
 ├── install.sh         # Cài đặt đầy đủ

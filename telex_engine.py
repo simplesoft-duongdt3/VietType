@@ -59,6 +59,28 @@ def strip_shape(c):
     return SHAPE_STRIP.get(c, c)
 
 
+def bare_of(c):
+    """Bóc hết mũ/móc + dấu thanh -> chữ gốc (vd ắ->a, ơ->o, ứ->u)."""
+    s = SHAPE_STRIP.get(c, c)
+    if s in CHAR_INFO:
+        return CHAR_INFO[s][0]
+    return s
+
+
+def apply_horn(c):
+    """u/o (+dấu, hoa/thường) -> ư/ơ giữ dấu + case. None nếu gốc không phải u/o."""
+    if bare_of(c).lower() == 'u':
+        nc = 'Ư' if c.isupper() else 'ư'
+    elif bare_of(c).lower() == 'o':
+        nc = 'Ơ' if c.isupper() else 'ơ'
+    else:
+        return None
+    lt = tone_of(c)
+    if lt and lt != 'ngang':
+        nc = apply_tone_to_char(nc, lt)
+    return nc
+
+
 def char_info(ch):
     """-> (base_lower_or_upper, tone_name). tone 'ngang' nếu không dấu."""
     if ch in CHAR_INFO:
@@ -242,6 +264,23 @@ class TelexEngine:
             if last in ('ư', 'Ư'):
                 out = 'W' if (last.isupper() or upper) else 'w'
                 return (True, word[:-1] + out)
+            # 1b) cặp uo (kiểu GoTV): "nguoi"+w -> "ngươi", "tuoi"+w -> "tươi"
+            #     tìm cặp u+o liền kề cuối cùng rồi gắn/khử móc cả hai cùng lúc
+            if len(word) >= 2:
+                _pi = -1
+                for _i in range(len(word) - 1, 0, -1):
+                    if (bare_of(word[_i - 1]).lower() == 'u'
+                            and bare_of(word[_i]).lower() == 'o'):
+                        _pi = _i
+                        break
+                if _pi > 0:
+                    _a, _b = word[_pi - 1], word[_pi]
+                    if base_of(_a).lower() == 'ư' and base_of(_b).lower() == 'ơ':
+                        # repeat-undo: bóc cả hai + trả phím thô
+                        return (True, word[:_pi - 1] + strip_shape(_a)
+                                + strip_shape(_b) + word[_pi + 1:] + ch)
+                    return (True, word[:_pi - 1] + apply_horn(_a)
+                            + apply_horn(_b) + word[_pi + 1:])
             lb = base_of(last).lower()
             lt = tone_of(last)
             # 2) a/o/u + w -> ă/ơ/ư (giữ dấu + hoa, vd á + w -> ắ)

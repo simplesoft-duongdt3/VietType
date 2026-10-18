@@ -9,7 +9,7 @@ sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 gn
 
 echo "== 2. Copy app vào /opt/viettype =="
 sudo mkdir -p /opt/viettype
-sudo cp "$SRC_DIR/telex_engine.py" "$SRC_DIR/viettype_app.py" "$SRC_DIR/viettype.svg" /opt/viettype/
+sudo cp "$SRC_DIR/telex_engine.py" "$SRC_DIR/viettype_app.py" "$SRC_DIR/viettype.svg" "$SRC_DIR/fog.svg" "$SRC_DIR/pin.svg" "$SRC_DIR/eye.svg" "$SRC_DIR/sun.svg" "$SRC_DIR/moon.svg" /opt/viettype/
 sudo chmod +x /opt/viettype/viettype_app.py
 
 echo "== 3. Tạo launcher =="

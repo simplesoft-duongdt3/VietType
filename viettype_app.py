@@ -12,10 +12,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from telex_engine import TelexEngine
 
 APP_ID = 'vn.viettype.pad'
-APP_VERSION = '1.3.0'
+APP_VERSION = '1.6.9'
 CONFIG_DIR = os.path.expanduser('~/.config/viettype')
 SAMPLES_FILE = os.path.join(CONFIG_DIR, 'samples.json')
 AUTOSTART_FILE = os.path.expanduser('~/.config/autostart/viettype.desktop')
+STATE_FILE = os.path.join(CONFIG_DIR, 'state.json')
 
 
 def app_dir():
@@ -28,6 +29,43 @@ def icon_path():
         if os.path.exists(p):
             return p
     return None
+
+
+def asset_path(name):
+    for p in (os.path.join('/opt/viettype', name),
+              os.path.join(app_dir(), name)):
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def header_icon(icon_name, fallback_file=None, size=16):
+    """Ảnh cho nút header: ưu tiên icon theme, thiếu thì dùng file SVG kèm app."""
+    try:
+        theme = Gtk.IconTheme.get_default()
+        if theme is not None and theme.has_icon(icon_name):
+            return Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
+    except Exception:
+        pass
+    if fallback_file:
+        try:
+            pb = GdkPixbuf.Pixbuf.new_from_file_at_size(fallback_file, size, size)
+            return Gtk.Image.new_from_pixbuf(pb)
+        except Exception:
+            pass
+    return Gtk.Image.new_from_icon_name('missing-image', Gtk.IconSize.MENU)
+
+
+def file_icon(name, size=16):
+    """Ảnh từ file SVG kèm app (chuẩn mọi theme): pin.svg / eye.svg / fog.svg."""
+    p = asset_path(name)
+    if p:
+        try:
+            pb = GdkPixbuf.Pixbuf.new_from_file_at_size(p, size, size)
+            return Gtk.Image.new_from_pixbuf(pb)
+        except Exception as e:
+            print('icon file:', e)
+    return Gtk.Image.new_from_icon_name('missing-image', Gtk.IconSize.MENU)
 
 
 def app_exec_path():
@@ -58,13 +96,6 @@ def set_autostart(on):
         print('autostart:', e)
         return False
 
-DEFAULT_SAMPLES = [
-    {"abbr": "chao", "content": "Xin chào, tôi có thể giúp gì cho bạn?"},
-    {"abbr": "camon", "content": "Cảm ơn quý khách đã tin tưởng sử dụng dịch vụ."},
-    {"abbr": "xn", "content": "Vui lòng xác nhận lại thông tin giúp em ạ."},
-    {"abbr": "hen", "content": "Hẹn gặp lại vào lúc 9 giờ sáng mai."},
-    {"abbr": "mail", "content": "Tôi đã nhận được email của bạn, tôi sẽ phản hồi sớm."},
-]
 WORD_DELIMS = set(' \t\n.,;:!?()[]{}<>\"\'/\\|@#$%^&*-+=~`0123456789')
 CHIP_TARGETS = [Gtk.TargetEntry.new('VIETTYPE_CHIP', Gtk.TargetFlags.SAME_APP, 0)]
 
@@ -84,39 +115,38 @@ def short_label(s, taken):
 
 def load_samples():
     """Đọc mẫu câu. Mỗi mẫu = {'abbr': viết tắt, 'content': nội dung}.
-    Tự chuyển dữ liệu cũ (list chuỗi) sang định dạng mới."""
-    def defaults():
-        return [dict(d) for d in DEFAULT_SAMPLES]
+    Tự chuyển dữ liệu cũ (list chuỗi) sang định dạng mới.
+    Không có mẫu mặc định: chưa có file -> rỗng, file rỗng -> rỗng,
+    file hỏng -> rỗng (không tự sinh gì thêm)."""
     try:
-        if os.path.exists(SAMPLES_FILE):
-            with open(SAMPLES_FILE, 'r', encoding='utf-8') as f:
-                d = json.load(f)
-                if isinstance(d, dict) and isinstance(d.get('templates'), list):
-                    d = d['templates']
-                if isinstance(d, list) and d:
-                    taken = set()
-                    out = []
-                    for x in d:
-                        if isinstance(x, dict) and str(x.get('content', '')).strip():
-                            ab = str(x.get('abbr', '')).strip()
-                            co = str(x['content']).strip()
-                        else:
-                            co = str(x).strip()
-                            ab = ''
-                        if not co:
-                            continue
-                        if not ab:
-                            ab = short_label(co, taken)
-                        elif ab in taken:
-                            ab = short_label(ab, taken)
-                        else:
-                            taken.add(ab)
-                        out.append({'abbr': ab, 'content': co})
-                    if out:
-                        return out
+        with open(SAMPLES_FILE, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+        if isinstance(d, dict) and isinstance(d.get('templates'), list):
+            d = d['templates']
+        if not isinstance(d, list):
+            return []
+        taken = set()
+        out = []
+        for x in d:
+            if isinstance(x, dict) and str(x.get('content', '')).strip():
+                ab = str(x.get('abbr', '')).strip()
+                co = str(x['content']).strip()
+            else:
+                co = str(x).strip()
+                ab = ''
+            if not co:
+                continue
+            if not ab:
+                ab = short_label(co, taken)
+            elif ab in taken:
+                ab = short_label(ab, taken)
+            else:
+                taken.add(ab)
+            out.append({'abbr': ab, 'content': co})
+        return out
     except Exception as e:
         print('samples:', e)
-    return defaults()
+    return []
 
 
 def save_samples(s):
@@ -128,6 +158,28 @@ def save_samples(s):
         print('save:', e)
 
 
+def load_window_state():
+    """Dict trạng thái đã lưu: width/height/x/y/keep_above; {} nếu chưa có."""
+    try:
+        with open(STATE_FILE, 'r', encoding='utf-8') as f:
+            d = json.load(f)
+            if isinstance(d, dict):
+                return d
+    except Exception:
+        pass
+    return {}
+
+
+def save_window_state(w, h, x, y, keep_above=False, dark=False):
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(STATE_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'width': w, 'height': h, 'x': x, 'y': y,
+                       'keep_above': bool(keep_above), 'dark': bool(dark)}, f)
+    except Exception as e:
+        print('state:', e)
+
+
 class VietTypeWindow(Gtk.Window):
     def __init__(self):
         super().__init__(title='VietType')
@@ -136,6 +188,7 @@ class VietTypeWindow(Gtk.Window):
             self.set_wmclass('VietType', 'VietType')
         except Exception:
             pass
+        self._theme_menu = None
         ip = icon_path()
         if ip:
             try:
@@ -143,11 +196,24 @@ class VietTypeWindow(Gtk.Window):
             except Exception as e:
                 print('icon:', e)
         self.set_default_size(320, 270)
+        # Khôi phục kích thước/vị trí lần trước (nếu có)
+        self._saved = load_window_state()
+        try:
+            _sw, _sh = int(self._saved.get('width', 0)), int(self._saved.get('height', 0))
+            _sx, _sy = int(self._saved.get('x', -1)), int(self._saved.get('y', -1))
+        except (TypeError, ValueError):
+            _sw = _sh = 0
+            _sx = _sy = -1
+        if _sw >= 220 and _sh >= 160:
+            self.resize(_sw, _sh)
+        if _sx >= 0 and _sy >= 0:
+            self.move(_sx, _sy)
         self.set_position(Gtk.WindowPosition.CENTER)
         self.engine = TelexEngine()
         self.telex_enabled = True
         self._busy = False
         self._faded = False
+        self.dark_mode = False
         self.samples = load_samples()
         self.indicator = None
         self.undo = []          # stack (mark, old_word, new_word) cho ESC hoàn tác
@@ -157,42 +223,57 @@ class VietTypeWindow(Gtk.Window):
         hb = Gtk.HeaderBar()
         hb.set_show_close_button(True)
         hb.props.title = 'VietType'
-        hb.props.subtitle = f'Telex pad • v{APP_VERSION}'
+        hb.props.subtitle = f'Bảng gõ Telex • v{APP_VERSION}'
         hb.set_decoration_layout('menu:close')
         self.set_titlebar(hb)
 
-        self.telex_sw = Gtk.Switch()
-        self.telex_sw.set_active(True)
-        self.telex_sw.set_tooltip_text('Telex BẬT/TẮT')
-        self.telex_sw.connect('notify::active', self.on_telex)
-        b1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        b1.pack_start(Gtk.Label(label='Telex', opacity=0.8), False, False, 0)
-        b1.pack_start(self.telex_sw, False, False, 0)
-        hb.pack_start(b1)
-
-        self.top_btn = Gtk.ToggleButton(label='Top')
-        self.top_btn.set_tooltip_text('Luôn trên cùng')
+        # 3 nút icon gọn (designer: relief NONE, icon-only, tooltip đầy đủ)
+        # 3 nút icon gọn: ghim (pin) + mờ (fog) + ẩn (eye)
+        self.top_btn = Gtk.ToggleButton()
+        self.top_btn.set_image(file_icon('pin.svg'))
+        self.top_btn.set_always_show_image(True)
+        self.top_btn.set_relief(Gtk.ReliefStyle.NONE)
+        self.top_btn.set_focus_on_click(False)
+        self.top_btn.set_tooltip_text('Ghim luôn trên cùng (Always on top)')
         self.top_btn.connect('toggled', lambda b: self.set_keep_above(b.get_active()))
         hb.pack_end(self.top_btn)
 
-        self.fade_btn = Gtk.ToggleButton(label='Mờ')
-        self.fade_btn.set_tooltip_text('Bật/tắt chế độ mờ (trong suốt 70%)')
+        self.fade_btn = Gtk.ToggleButton()
+        self.fade_btn.set_image(header_icon('weather-fog', asset_path('fog.svg')))
+        self.fade_btn.set_always_show_image(True)
+        self.fade_btn.set_relief(Gtk.ReliefStyle.NONE)
+        self.fade_btn.set_focus_on_click(False)
+        self.fade_btn.set_tooltip_text('Mờ 70% — nhấn lại để rõ')
         self.fade_btn.connect('toggled', self.on_fade)
         hb.pack_end(self.fade_btn)
 
-        self.hide_btn = Gtk.Button(label='Ẩn')
+        self.hide_btn = Gtk.Button()
+        self.hide_btn.set_image(file_icon('eye.svg'))
+        self.hide_btn.set_always_show_image(True)
+        self.hide_btn.set_relief(Gtk.ReliefStyle.NONE)
+        self.hide_btn.set_focus_on_click(False)
         self.hide_btn.set_tooltip_text('Ẩn xuống top bar (mở lại từ icon VIE)')
         self.hide_btn.connect('clicked', self.on_hide_clicked)
         hb.pack_end(self.hide_btn)
 
-        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        v.set_border_width(6)
+        self.theme_btn = Gtk.Button()
+        self.theme_btn.set_image(file_icon('moon.svg'))
+        self.theme_btn.set_always_show_image(True)
+        self.theme_btn.set_relief(Gtk.ReliefStyle.NONE)
+        self.theme_btn.set_focus_on_click(False)
+        self.theme_btn.set_tooltip_text('Chuyển chế độ tối/sáng (Dark/Light)')
+        self.theme_btn.connect('clicked', self.on_theme_toggle)
+        hb.pack_end(self.theme_btn)
+
+        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        v.set_border_width(8)
         self.add(v)
 
         css = Gtk.CssProvider()
         css.load_from_data(b'''
         .chip { border-radius: 12px; padding: 1px 10px; font-size: 11px; }
         .chip-add { border-radius: 12px; padding: 1px 10px; font-weight: bold; opacity: 0.8; }
+        .mini { padding: 1px 8px; min-height: 22px; font-size: 11px; }
         ''')
         Gtk.StyleContext.add_provider_for_screen(
             Gdk.Screen.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -221,13 +302,22 @@ class VietTypeWindow(Gtk.Window):
         self.drag_eb.connect('button-press-event', self._on_press_drag_zone)
         v.pack_start(self.drag_eb, False, False, 0)
 
-        # 1 hàng nút duy nhất
-        r = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        for label, tip, cb in [
-            ('Copy', 'Copy vào clipboard', self.on_copy),
-            ('Clear', 'Xoá trắng', self.on_clear),
+        # Hàng điều khiển: Telex toggle gọn + Copy / Xoá (icon + chữ)
+        r = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.telex_sw = Gtk.ToggleButton(label='Telex')
+        self.telex_sw.set_active(True)
+        self.telex_sw.get_style_context().add_class('mini')
+        self.telex_sw.set_focus_on_click(False)
+        self.telex_sw.set_tooltip_text('Bật/Tắt gõ Telex (tắt = gõ không dấu)')
+        self.telex_sw.connect('toggled', self.on_telex)
+        r.pack_start(self.telex_sw, False, False, 0)
+        for label, icon, tip, cb in [
+            ('Copy', 'edit-copy', 'Sao chép nội dung ô nhập vào clipboard', self.on_copy),
+            ('Xoá', 'edit-clear', 'Xoá trắng ô nhập', self.on_clear),
         ]:
             b = Gtk.Button(label=label)
+            b.set_image(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.BUTTON))
+            b.set_always_show_image(True)
             b.set_tooltip_text(tip)
             b.connect('clicked', cb)
             b.connect('button-press-event', self._on_press_drag)
@@ -266,7 +356,57 @@ class VietTypeWindow(Gtk.Window):
 
         self.refresh()
         self.setup_indicator()
+        # Khôi phục trạng thái ghim (pin) + chế độ tối lần trước
+        if self._saved.get('keep_above'):
+            self.top_btn.set_active(True)
+        if self._saved.get('dark'):
+            self.dark_mode = True
+            self.apply_theme()
         self.connect('delete-event', self.on_close)
+        self.connect('destroy', lambda *_a: self.save_window())
+        # Lưu size realtime (debounce) để luôn là "latest", kể cả crash/kill
+        self._save_timer = None
+        self.connect('configure-event', self.on_configure)
+
+    def on_configure(self, *_a):
+        if self._save_timer is not None:
+            GLib.source_remove(self._save_timer)
+        self._save_timer = GLib.timeout_add(600, self._delayed_save)
+        return False
+
+    def _delayed_save(self):
+        self._save_timer = None
+        self.save_window()
+        return False
+
+    def save_window(self):
+        """Lưu kích thước + vị trí + trạng thái ghim + chế độ tối hiện tại."""
+        try:
+            w, h = self.get_size()
+            x, y = self.get_position()
+            save_window_state(w, h, x, y,
+                              keep_above=self.top_btn.get_active(),
+                              dark=self.dark_mode)
+        except Exception as e:
+            print('state:', e)
+
+    def apply_theme(self):
+        try:
+            Gtk.Settings.get_default().set_property(
+                'gtk-application-prefer-dark-theme', self.dark_mode)
+        except Exception as e:
+            print('theme:', e)
+        self.theme_btn.set_image(
+            file_icon('sun.svg' if self.dark_mode else 'moon.svg'))
+        self.theme_btn.set_always_show_image(True)
+
+    def on_theme_toggle(self, _b=None):
+        self.dark_mode = not self.dark_mode
+        self.apply_theme()
+        if self._theme_menu is not None and \
+                self._theme_menu.get_active() != self.dark_mode:
+            self._theme_menu.set_active(self.dark_mode)
+        self.save_window()
 
     # --- Telex ---
     def word_before(self, buf, cur):
@@ -367,19 +507,12 @@ class VietTypeWindow(Gtk.Window):
         return False
 
     def _on_window_press(self, _w, event):
+        # Chỉ Alt+kéo ở cấp cửa sổ. Click thường KHÔNG chạm tới ở đây để
+        # nhường cho GTK xử lý: resize viền, kéo titlebar, focus/gõ TextView.
+        # (Kéo nền dùng thanh trạng thái EventBox riêng.)
         if getattr(event, 'button', 0) != 1:
             return False
         if event.state & Gdk.ModifierType.MOD1_MASK:
-            return self._begin_move(event)
-        try:
-            target = Gtk.get_event_widget(event)
-        except Exception:
-            return False
-        # CHỈ kéo khi nhấn trực tiếp lên nền/vùng trống — tuyệt đối không
-        # đi ngược parents (nếu không, click trong TextView/nút/chip cũng
-        # kích hoạt di chuyển cửa sổ và cướp focus/gõ phím).
-        if target is self or target is self.main_vbox \
-                or target is self.drag_eb or target is self.st:
             return self._begin_move(event)
         return False
 
@@ -387,7 +520,7 @@ class VietTypeWindow(Gtk.Window):
         m = 'BẬT' if self.telex_enabled else 'TẮT'
         self.st.set_markup(f'<small>Telex <b>{m}</b> • {buf.get_char_count()}</small>')
 
-    def on_telex(self, sw, _p):
+    def on_telex(self, sw, _p=None):
         self.telex_enabled = sw.get_active()
         self.on_changed(self.tv.get_buffer())
         if self.indicator and hasattr(self.indicator, 'set_label'):
@@ -416,6 +549,7 @@ class VietTypeWindow(Gtk.Window):
             pass
 
     def on_hide_clicked(self, _b):
+        self.save_window()
         if self.indicator is not None:
             self.hide()
         else:
@@ -649,6 +783,12 @@ class VietTypeWindow(Gtk.Window):
             ma.connect('toggled', lambda x: (set_autostart(x.get_active()),
                                              self.auto_chk.set_active(x.get_active())))
             m.append(ma)
+            md = Gtk.CheckMenuItem(label='Chế độ tối')
+            md.set_active(self.dark_mode)
+            md.connect('toggled', lambda x: (self.on_theme_toggle()
+                                             if x.get_active() != self.dark_mode else None))
+            m.append(md)
+            self._theme_menu = md
             mi_about = Gtk.MenuItem(label=f'Giới thiệu VietType v{APP_VERSION}')
             mi_about.connect('activate', self.show_about)
             m.append(mi_about)
@@ -661,6 +801,7 @@ class VietTypeWindow(Gtk.Window):
             self.indicator = None
 
     def on_close(self, *a):
+        self.save_window()
         if self.indicator is not None:
             self.hide()
             return True
