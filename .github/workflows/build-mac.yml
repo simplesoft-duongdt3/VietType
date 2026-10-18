@@ -1,0 +1,32 @@
+name: Build macOS (Intel + Apple Silicon)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-13 = Intel runner, macos-15 = Apple Silicon runner.
+        # If a label is retired, replace with the current equivalent
+        # (e.g. macos-15-intel for Intel).
+        include:
+          - os: macos-13
+            arch: intel
+          - os: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build DMG
+        run: bash build-mac.sh
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: VietType-mac-${{ matrix.arch }}
+          path: VietType-*-mac-*.dmg

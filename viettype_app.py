@@ -11,6 +11,13 @@ import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from telex_engine import TelexEngine
 
+try:
+    import mac_support as _mac
+    if not _mac.is_mac():
+        _mac = None
+except Exception:
+    _mac = None
+
 APP_ID = 'vn.viettype.pad'
 APP_VERSION = '1.6.9'
 CONFIG_DIR = os.path.expanduser('~/.config/viettype')
@@ -24,6 +31,10 @@ def app_dir():
 
 
 def icon_path():
+    if _mac is not None:
+        p = _mac.icon_file()
+        if p:
+            return p
     for p in ('/opt/viettype/viettype.svg',
               os.path.join(app_dir(), 'viettype.svg')):
         if os.path.exists(p):
@@ -76,10 +87,18 @@ def app_exec_path():
 
 
 def is_autostart():
+    if _mac is not None:
+        return _mac.is_autostart_mac()
     return os.path.exists(AUTOSTART_FILE)
 
 
 def set_autostart(on):
+    if _mac is not None:
+        if getattr(sys, 'frozen', False):
+            argv = [sys.executable]
+        else:
+            argv = [sys.executable, os.path.abspath(__file__)]
+        return _mac.set_autostart_mac(bool(on), argv)
     try:
         if on:
             os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)

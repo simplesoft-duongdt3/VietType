@@ -82,10 +82,13 @@ Autostart can also be toggled inside the app (checkbox at the bottom, or the ind
 VietType/
 ├── viettype_app.py    # GTK3 UI: pad, chips, tray, autostart, drag, ESC-undo
 ├── telex_engine.py    # Stateless Telex engine (live key-by-key conversion)
-├── test_telex.py      # 57 engine test cases (run: /usr/bin/python3 test_telex.py)
-├── viettype.svg       # App/dock icon
+├── mac_support.py     # macOS helpers (icon, LaunchAgents autostart)
+├── test_telex.py      # 60 engine test cases (run: /usr/bin/python3 test_telex.py)
+├── viettype.svg       # App/dock icon (+ pin/eye/sun/moon/fog.svg header icons)
 ├── viettype.desktop   # Launcher (StartupWMClass=VietType)
-├── install.sh         # Full installer
+├── install.sh         # Full installer (Linux)
+├── build-mac.sh       # macOS .app + DMG builder (run on a Mac)
+├── .github/workflows/build-mac.yml  # CI: DMG for Intel + Apple Silicon
 └── run.sh             # Quick launcher
 ```
 
@@ -96,8 +99,23 @@ VietType/
 | `No module named 'gi'` | Use `/usr/bin/python3`, not mise/venv Python. |
 | No top-bar icon | Install `gir1.2-ayatanaappindicator3-0.1` and run `gnome-extensions enable ubuntu-appindicators@ubuntu.com`, then relaunch. The app still works without it. |
 | Two dock icons / gray icon | Re-run `./install.sh` so `StartupWMClass=VietType` matches the window class, then log out/in. |
-| Can't click/type in the text area | Update to the latest version — window dragging is now restricted to the background/status strip and **Alt + drag**, and never steals text-area clicks. |
+| Can't click/type in the text area | Update to the latest version — window dragging is restricted to the status strip and **Alt + drag**, and never steals text-area clicks. |
 | Lost templates | They live in `~/.config/viettype/samples.json` — back up this file. |
+
+### 10. macOS (Intel & Apple Silicon)
+
+**Option A — DMG (recommended).** Download `VietType-1.6.9-mac-intel.dmg` (Intel) or `VietType-1.6.9-mac-arm64.dmg` (M1/M2/M3/M4) from GitHub Releases — built by CI on real Intel and Apple Silicon runners. Drag `VietType.app` to Applications. First launch: right-click → *Open* (ad-hoc signature, one time only).
+
+**Option B — run from source.**
+```bash
+brew install python3 gtk+3 pygobject3 gobject-introspection librsvg adwaita-icon-theme
+/opt/homebrew/bin/python3 viettype_app.py   # Apple Silicon
+/usr/local/bin/python3 viettype_app.py      # Intel
+```
+
+**Build your own DMG** (on a Mac): `bash build-mac.sh` → DMG appears in the project folder. CI does the same via `.github/workflows/build-mac.yml`.
+
+**Differences vs Linux:** no top-bar indicator — use the dock instead (the Hide button minimizes to the dock; closing the window quits). Autostart writes a LaunchAgent (`~/Library/LaunchAgents/vn.viettype.pad.plist`) and the in-app checkbox works. `Cmd+C / Cmd+V / Cmd+A` work in the text area. Telex engine, chips, pin, fade, drag, ESC-undo and theme toggle are identical.
 
 ---
 
@@ -175,10 +193,13 @@ Cũng có thể bật/tắt autostart ngay trong app (checkbox cuối cửa sổ
 VietType/
 ├── viettype_app.py    # Giao diện GTK3: ô nhập, chips, tray, autostart, kéo thả, ESC
 ├── telex_engine.py    # Engine Telex stateless (biến đổi từng phím live)
-├── test_telex.py      # 57 case kiểm thử (chạy: /usr/bin/python3 test_telex.py)
-├── viettype.svg       # Icon app/dock
+├── mac_support.py     # Hỗ trợ macOS (icon, autostart LaunchAgents)
+├── test_telex.py      # 60 case kiểm thử (chạy: /usr/bin/python3 test_telex.py)
+├── viettype.svg       # Icon app/dock (+ pin/eye/sun/moon/fog.svg cho header)
 ├── viettype.desktop   # Launcher (StartupWMClass=VietType)
-├── install.sh         # Cài đặt đầy đủ
+├── install.sh         # Cài đặt đầy đủ (Linux)
+├── build-mac.sh       # Đóng gói .app + DMG macOS (chạy trên máy Mac)
+├── .github/workflows/build-mac.yml  # CI: build DMG Intel + Apple Silicon
 └── run.sh             # Chạy nhanh
 ```
 
@@ -191,3 +212,18 @@ VietType/
 | Dock hiện 2 icon / icon xám | Chạy lại `./install.sh` để `StartupWMClass=VietType` khớp class cửa sổ, rồi đăng nhập lại. |
 | Không click/gõ được ô nhập | Cập nhật bản mới nhất — kéo cửa sổ giờ chỉ tác động nền/thanh trạng thái và **Alt + kéo**, không cướp click ô nhập. |
 | Mất mẫu câu | Mẫu lưu ở `~/.config/viettype/samples.json` — hãy sao lưu file này. |
+
+### 10. macOS (Intel & Apple Silicon)
+
+**Cách A — DMG (khuyên dùng).** Tải `VietType-1.6.9-mac-intel.dmg` (Intel) hoặc `VietType-1.6.9-mac-arm64.dmg` (chip M1/M2/M3/M4) từ GitHub Releases — do CI biên dịch trên máy Intel và Apple Silicon thật. Kéo `VietType.app` vào Applications. Lần mở đầu: chuột phải → *Open* (chữ ký ad-hoc, chỉ một lần).
+
+**Cách B — chạy từ mã nguồn.**
+```bash
+brew install python3 gtk+3 pygobject3 gobject-introspection librsvg adwaita-icon-theme
+/opt/homebrew/bin/python3 viettype_app.py   # chip Apple Silicon
+/usr/local/bin/python3 viettype_app.py      # Intel
+```
+
+**Tự build DMG** (trên máy Mac): `bash build-mac.sh` → DMG nằm trong thư mục dự án. CI làm tương tự qua `.github/workflows/build-mac.yml`.
+
+**Khác biệt so với Linux:** không có icon top bar — dùng dock thay thế (nút Ẩn thu xuống dock; đóng cửa sổ là thoát). Autostart ghi LaunchAgent (`~/Library/LaunchAgents/vn.viettype.pad.plist`), checkbox trong app dùng được. `Cmd+C / Cmd+V / Cmd+A` hoạt động trong ô nhập. Engine Telex, chips, ghim, mờ, kéo thả, ESC và sáng/tối giống hệt.

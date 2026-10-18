@@ -32,6 +32,8 @@ cases = [
     ("tuoiws", "tưới"), ("tuoiwr", "tưởi"), ("tuoiwx", "tưỡi"),
     ("nguoiws", "ngưới"), ("nguoiwx", "ngưỡi"), ("ruouw", "rươu"),
     ("uow", "ươ"), ("NGUOIW", "NGƯƠI"),
+    # gi/qu onset: bỏ qua i/u khi đặt dấu
+    ("giaf", "già"), ("quaf", "quà"), ("hoaf", "hoà"),
 ]
 fails = 0
 for raw, exp in cases:
