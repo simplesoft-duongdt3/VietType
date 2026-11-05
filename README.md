@@ -1,10 +1,10 @@
-# VietType v1.6.9 — Khung gõ Telex nhỏ gọn cho Ubuntu / Compact Telex Pad for Ubuntu
+# VietType v2.6.9 — Khung gõ Telex nhỏ gọn cho Ubuntu / Compact Telex Pad for Ubuntu
 
 > **Tiếng Việt:** VietType là một khung nhập liệu nhỏ, luôn sẵn sàng trên Ubuntu — gõ Telex trực tiếp (live), quản lý câu mẫu bằng chips, copy/chèn nhanh, luôn trên cùng, hiện icon trên top bar và tự khởi động cùng hệ thống.
 >
 > **English:** VietType is a small always-ready input pad for Ubuntu — live Telex typing, chip-based snippet templates, one-click copy/insert, always-on-top, top-bar indicator, and autostart support.
 
-![Platform](https://img.shields.io/badge/platform-Ubuntu%2024%2F26-blue) ![Toolkit](https://img.shields.io/badge/GTK-3-orange) ![Engine](https://img.shields.io/badge/Telex-GoTV%2FOpenKey--style-green) ![Version](https://img.shields.io/badge/version-1.6.9-brightgreen)
+![Platform](https://img.shields.io/badge/platform-Ubuntu%2024%2F26-blue) ![Toolkit](https://img.shields.io/badge/GTK-3-orange) ![Engine](https://img.shields.io/badge/Telex-GoTV%2FOpenKey--style-green) ![Version](https://img.shields.io/badge/version-2.6.9-brightgreen)
 
 ---
 
@@ -106,7 +106,7 @@ VietType/
 
 ### 10. macOS (Intel & Apple Silicon)
 
-**Option A — DMG (recommended).** Download `VietType-1.6.9-mac-intel.dmg` (Intel) or `VietType-1.6.9-mac-arm64.dmg` (M1/M2/M3/M4) from GitHub Releases — built by CI on real Intel and Apple Silicon runners. Drag `VietType.app` to Applications. First launch: right-click → *Open* (ad-hoc signature, one time only).
+**Option A — DMG (recommended).** Download `VietType-2.6.9-mac-intel.dmg` (Intel) or `VietType-2.6.9-mac-arm64.dmg` (M1/M2/M3/M4) from GitHub Releases — built by CI on real Intel and Apple Silicon runners. Drag `VietType.app` to Applications. First launch: right-click → *Open* (ad-hoc signature, one time only).
 
 **Option B — run from source.**
 ```bash
@@ -219,7 +219,7 @@ VietType/
 
 ### 10. macOS (Intel & Apple Silicon)
 
-**Cách A — DMG (khuyên dùng).** Tải `VietType-1.6.9-mac-intel.dmg` (Intel) hoặc `VietType-1.6.9-mac-arm64.dmg` (chip M1/M2/M3/M4) từ GitHub Releases — do CI biên dịch trên máy Intel và Apple Silicon thật. Kéo `VietType.app` vào Applications. Lần mở đầu: chuột phải → *Open* (chữ ký ad-hoc, chỉ một lần).
+**Cách A — DMG (khuyên dùng).** Tải `VietType-2.6.9-mac-intel.dmg` (Intel) hoặc `VietType-2.6.9-mac-arm64.dmg` (chip M1/M2/M3/M4) từ GitHub Releases — do CI biên dịch trên máy Intel và Apple Silicon thật. Kéo `VietType.app` vào Applications. Lần mở đầu: chuột phải → *Open* (chữ ký ad-hoc, chỉ một lần).
 
 **Cách B — chạy từ mã nguồn.**
 ```bash

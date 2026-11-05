@@ -25,7 +25,7 @@ except Exception:
     _mac = None
 
 APP_ID = 'vn.viettype.pad'
-APP_VERSION = '1.6.9'
+APP_VERSION = '2.6.9'
 CONFIG_DIR = os.path.expanduser('~/.config/viettype')
 SAMPLES_FILE = os.path.join(CONFIG_DIR, 'samples.json')
 AUTOSTART_FILE = os.path.expanduser('~/.config/autostart/viettype.desktop')
