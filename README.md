@@ -19,6 +19,7 @@ VietType is a lightweight Vietnamese input pad. Instead of switching system-wide
 | Area | Details |
 |---|---|
 | Live Telex input | Type `as` → `á` directly in the text area; toggle Telex ON/OFF (OFF = plain ASCII). Repeat-key undo in GoTV/OpenKey style (`ww` → `w`, `ass` → `as`). **ESC** undoes the last applied mark (50-step history). |
+| Undo & history | **Ctrl+Z** / **Ctrl+Shift+Z** (or **Ctrl+Y**) undo/redo whole edits, including *Clear* (200 steps, typing grouped by pause). Every paste / cut / block delete is its own step, so an accidental paste-over is always one Ctrl+Z away; when it replaces most of the text, the old draft is kept as a separate history entry. **Ctrl+H** or the clock button opens the input history: accent-insensitive search (`viet` finds `Việt`), insert/copy/delete, on/off switch. Stored in `~/.local/share/viettype/history.db` (SQLite, mode 600): one row per draft updated in place, duplicates merged, long text zlib-compressed, capped at 1000 entries / 180 days. |
 | Template chips | Each template has an **abbreviation** shown on the chip and a **content** body. Horizontal scroll, unlimited count, drag-and-drop reorder. **Click** = copy content • **Double-click** = insert at cursor • Right-click = insert / copy / edit / move / delete. The **+** button adds a new template (abbreviation + content, auto-suggested). Stored in `~/.config/viettype/samples.json`; legacy plain-string lists auto-migrate. |
 | Window behavior | Header shows the full name with 4 compact icon buttons (pin-on-top, fade, hide-to-tray, dark/light theme). The Telex switch sits in the control row next to Copy / Clear (icon + text). Theme choice is remembered. Drag the status strip, or **Alt + drag anywhere** (text area, chips, buttons) — window borders always resize normally. Default size 320×270, freely resizable, size/position restored on launch. |
 | System integration | Top-bar indicator (Ayatana AppIndicator): show/hide, Telex, fade, autostart, about, quit. Dock icon via `StartupWMClass` + SVG icon. Optional autostart on login. Version shown in header subtitle, About dialog, and `--version`. |
@@ -82,6 +83,7 @@ Autostart can also be toggled inside the app (checkbox at the bottom, or the ind
 VietType/
 ├── viettype_app.py    # GTK3 UI: pad, chips, tray, autostart, drag, ESC-undo
 ├── telex_engine.py    # Stateless Telex engine (live key-by-key conversion)
+├── history_store.py   # Input history (SQLite, dedup + compression + retention)
 ├── mac_support.py     # macOS helpers (icon, LaunchAgents autostart)
 ├── test_telex.py      # 60 engine test cases (run: /usr/bin/python3 test_telex.py)
 ├── viettype.svg       # App/dock icon (+ pin/eye/sun/moon/fog.svg header icons)
@@ -130,6 +132,7 @@ VietType là khung nhập liệu tiếng Việt gọn nhẹ. Thay vì chuyển b
 | Nhóm | Chi tiết |
 |---|---|
 | Gõ Telex trực tiếp | Gõ `as` → `á` ngay trong ô nhập; công tắc Telex BẬT/TẮT (TẮT = gõ không dấu). Gõ lặp phím để hoàn tác kiểu GoTV/OpenKey (`ww` → `w`, `ass` → `as`). Phím **ESC** hoàn tác dấu vừa gõ (lịch sử 50 bước). |
+| Hoàn tác & lịch sử | **Ctrl+Z** / **Ctrl+Shift+Z** (hoặc **Ctrl+Y**) hoàn tác/làm lại cả thao tác, kể cả nút *Xoá* (200 bước, gộp theo nhịp gõ). Mỗi lần dán / cắt / xoá khối là 1 bước riêng nên lỡ dán đè chỉ cần Ctrl+Z; nếu dán đè phần lớn nội dung, bản cũ được giữ thành mục lịch sử riêng. **Ctrl+H** hoặc nút đồng hồ mở lịch sử nội dung: tìm không dấu (`viet` ra `Việt`), chèn/copy/xoá, bật/tắt lưu. Lưu tại `~/.local/share/viettype/history.db` (SQLite, quyền 600): mỗi bản nháp 1 dòng cập nhật tại chỗ, trùng thì gộp, văn bản dài được nén zlib, giữ tối đa 1000 mục / 180 ngày. |
 | Chips mẫu câu | Mỗi mẫu gồm **viết tắt** (hiện trên chip) và **nội dung**. Cuộn ngang không giới hạn, kéo-thả sắp xếp. **Click** = copy • **Đúp** = chèn vào con trỏ • Chuột phải = chèn / copy / sửa / dời / xoá. Nút **+** thêm mẫu mới (tự gợi ý viết tắt). Lưu tại `~/.config/viettype/samples.json`; dữ liệu mẫu cũ (list chuỗi) tự chuyển sang dạng mới. |
 | Cửa sổ | Header hiện tên đầy đủ với 4 nút icon gọn (ghim, mờ, ẩn, sáng/tối). Công tắc Telex nằm ở hàng điều khiển cạnh Copy / Xoá (icon + chữ). Chế độ sáng/tối được nhớ. Kéo thanh trạng thái, hoặc giữ **Alt + kéo ở mọi nơi** — viền cửa sổ luôn co giãn bình thường. Mặc định 320×270, co giãn tự do, nhớ kích thước/vị trí lần trước. |
 | Tích hợp hệ thống | Icon top bar (Ayatana AppIndicator): hiện/ẩn, Telex, mờ, autostart, giới thiệu, thoát. Icon dock qua `StartupWMClass` + SVG. Tuỳ chọn tự chạy khi đăng nhập. Phiên bản hiện ở subtitle, hộp Giới thiệu và `--version`. |
@@ -193,6 +196,7 @@ Cũng có thể bật/tắt autostart ngay trong app (checkbox cuối cửa sổ
 VietType/
 ├── viettype_app.py    # Giao diện GTK3: ô nhập, chips, tray, autostart, kéo thả, ESC
 ├── telex_engine.py    # Engine Telex stateless (biến đổi từng phím live)
+├── history_store.py   # Lịch sử nội dung (SQLite, chống trùng + nén + tự dọn)
 ├── mac_support.py     # Hỗ trợ macOS (icon, autostart LaunchAgents)
 ├── test_telex.py      # 60 case kiểm thử (chạy: /usr/bin/python3 test_telex.py)
 ├── viettype.svg       # Icon app/dock (+ pin/eye/sun/moon/fog.svg cho header)

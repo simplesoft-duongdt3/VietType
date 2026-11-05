@@ -36,7 +36,7 @@ fi
 echo "== Đóng gói $APP.app =="
 rm -rf "$APP.app" "$DMG"
 mkdir -p "$APP.app/Contents/MacOS" "$APP.app/Contents/Resources"
-cp telex_engine.py viettype_app.py mac_support.py viettype.svg viettype.icns \
+cp telex_engine.py history_store.py viettype_app.py mac_support.py viettype.svg viettype.icns \
    fog.svg pin.svg eye.svg sun.svg moon.svg "$APP.app/Contents/Resources/"
 
 cat > "$APP.app/Contents/MacOS/$APP" <<'LAUNCHER'
