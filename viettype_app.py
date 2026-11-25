@@ -3,7 +3,7 @@
 - Click chip: copy nội dung • Đúp chip: chèn vào ô nhập • Phải: sửa/xoá/dời
 - Kéo-thả chip để sắp xếp • ESC: hoàn tác dấu vừa gõ
 - Alt+kéo (mọi nơi) hoặc kéo từ nền/thanh trạng thái để di chuyển cửa sổ."""
-import json, os, sys, time
+import fcntl, json, os, signal, sys, time
 
 # Wayland (GNOME) bỏ qua set_keep_above + vị trí cửa sổ → chạy qua XWayland để ghim (pin) hoạt động
 if sys.platform.startswith('linux'):
@@ -30,6 +30,7 @@ CONFIG_DIR = os.path.expanduser('~/.config/viettype')
 SAMPLES_FILE = os.path.join(CONFIG_DIR, 'samples.json')
 AUTOSTART_FILE = os.path.expanduser('~/.config/autostart/viettype.desktop')
 STATE_FILE = os.path.join(CONFIG_DIR, 'state.json')
+INSTANCE_LOCK_FILE = os.path.join(CONFIG_DIR, 'instance.lock')
 HISTORY_FILE = os.path.join(os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share'),
                             'viettype', 'history.db')
 SNAP_MAX = 200              # số bước Ctrl+Z tối đa
@@ -105,13 +106,50 @@ def is_autostart():
     return os.path.exists(AUTOSTART_FILE)
 
 
+def _stable_python():
+    """python3 không kèm số phiên bản nếu nó cùng là trình thông dịch đang chạy
+    (vd. /opt/homebrew/bin/python3 thay vì .../python@3.15/bin/python3.15)."""
+    try:
+        cur = os.path.realpath(sys.executable)
+        for p in ('/opt/homebrew/bin/python3', '/usr/local/bin/python3', '/usr/bin/python3'):
+            if os.access(p, os.X_OK) and os.path.realpath(p) == cur:
+                return p
+    except Exception:
+        pass
+    return sys.executable
+
+
+def mac_autostart_argv():
+    script = os.path.abspath(__file__)
+    res_dir = os.path.dirname(script)
+    bundle_exe = os.path.join(os.path.dirname(res_dir), 'MacOS', 'VietType')
+    if getattr(sys, 'frozen', False):
+        return [sys.executable]
+    if res_dir.endswith('.app/Contents/Resources') and os.access(bundle_exe, os.X_OK):
+        # Chạy từ VietType.app: dùng launcher native của bundle, không ghim
+        # đường dẫn python3.x (sẽ hỏng khi Homebrew nâng cấp Python).
+        return [bundle_exe]
+    return [_stable_python(), script]
+
+
+def migrate_autostart_mac():
+    """LaunchAgent do bản cũ ghi có thể trỏ tới python3.x đã bị Homebrew gỡ.
+    Ghi lại khi lệnh hỏng, hoặc khi nó chạy chính bản này theo cách cũ.
+    Không đụng LaunchAgent trỏ tới bản cài khác còn chạy được."""
+    if _mac is None or not _mac.is_autostart_mac():
+        return
+    cur = _mac.autostart_argv_mac()
+    want = mac_autostart_argv()
+    if cur == want:
+        return
+    broken = not cur or not os.access(cur[0], os.X_OK)
+    if broken or os.path.abspath(__file__) in cur:
+        _mac.set_autostart_mac(True, want)
+
+
 def set_autostart(on):
     if _mac is not None:
-        if getattr(sys, 'frozen', False):
-            argv = [sys.executable]
-        else:
-            argv = [sys.executable, os.path.abspath(__file__)]
-        return _mac.set_autostart_mac(bool(on), argv)
+        return _mac.set_autostart_mac(bool(on), mac_autostart_argv())
     try:
         if on:
             os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)
@@ -1300,6 +1338,40 @@ class VietTypeWindow(Gtk.Window):
         search.grab_focus()
 
 
+_instance_lock = None  # giữ file mở suốt đời tiến trình để giữ khoá
+
+
+def acquire_single_instance():
+    """True nếu đây là bản duy nhất. Nếu đã có bản chạy (cùng state.json /
+    history.db), báo nó hiện cửa sổ rồi trả False để bản này thoát."""
+    global _instance_lock
+    try:
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        f = open(INSTANCE_LOCK_FILE, 'a+')
+    except OSError as e:
+        print('instance lock:', e)
+        return True
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            f.seek(0)
+            pid = int(f.read().strip() or 0)
+            if pid > 0:
+                os.kill(pid, signal.SIGUSR1)
+        except (OSError, ValueError) as e:
+            print('instance raise:', e)
+        f.close()
+        print('VietType đang chạy: đưa cửa sổ hiện có lên trước.')
+        return False
+    f.seek(0)
+    f.truncate()
+    f.write(str(os.getpid()))
+    f.flush()
+    _instance_lock = f
+    return True
+
+
 def main():
     if '--version' in sys.argv or '-V' in sys.argv:
         print(f'VietType {APP_VERSION}')
@@ -1311,8 +1383,17 @@ def main():
             Gtk.Window.set_default_icon_from_file(ip)
         except Exception as e:
             print('default icon:', e)
+    if not acquire_single_instance():
+        return
+    try:
+        migrate_autostart_mac()
+    except Exception as e:
+        print('autostart migrate:', e)
     w = VietTypeWindow()
     w.connect('destroy', Gtk.main_quit)
+    # Bản thứ hai mở ra gửi SIGUSR1: đưa cửa sổ đang chạy lên trước (kể cả khi đang ẩn/thu nhỏ)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1,
+                         lambda *a: (w.deiconify(), w.present(), True)[-1])
     w.show_all()
     Gtk.main()
     # Thoát từ top bar không qua delete-event: chốt bản nháp cuối

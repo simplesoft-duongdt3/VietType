@@ -39,16 +39,105 @@ mkdir -p "$APP.app/Contents/MacOS" "$APP.app/Contents/Resources"
 cp telex_engine.py history_store.py viettype_app.py mac_support.py viettype.svg viettype.icns \
    fog.svg pin.svg eye.svg sun.svg moon.svg "$APP.app/Contents/Resources/"
 
-cat > "$APP.app/Contents/MacOS/$APP" <<'LAUNCHER'
-#!/bin/bash
-DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"
-for p in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
-  if [ -x "$p" ]; then PY="$p"; break; fi
-done
-export GI_TYPELIB_PATH="$(brew --prefix 2>/dev/null)/lib/girepository-1.0:${GI_TYPELIB_PATH}"
-export XDG_DATA_DIRS="$(brew --prefix 2>/dev/null)/share:${XDG_DATA_DIRS}"
-exec "$PY" "$DIR/viettype_app.py" "$@"
+# Launcher = Mach-O universal (arm64 + x86_64) thay vì shell script. Nó nạp
+# libpython của Homebrew và chạy viettype_app.py NGAY TRONG tiến trình của
+# VietType.app, nên Activity Monitor / Dock / LaunchServices thấy "VietType"
+# (vn.viettype.pad, native Apple Silicon) chứ không phải Python.app.
+# Không tìm thấy libpython thì exec python3; không có python3 thì báo lỗi.
+LAUNCHER_DIR="$(mktemp -d -t viettype-launcher)"; LAUNCHER_C="$LAUNCHER_DIR/launcher.c"
+trap 'rm -rf "$LAUNCHER_DIR"' EXIT
+cat > "$LAUNCHER_C" <<'LAUNCHER'
+#include <dlfcn.h>
+#include <libgen.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+typedef int (*py_bytes_main_fn)(int, char **);
+
+static const char *MISSING_MSG =
+    "VietType cần Python 3 + GTK 3 từ Homebrew.\n\n"
+    "Mở Terminal và chạy:\n"
+    "brew install python3 gtk+3 pygobject3 gobject-introspection librsvg adwaita-icon-theme";
+
+static void prepend_env(const char *name, const char *value) {
+    const char *old = getenv(name);
+    char *buf = NULL;
+    int n = (old && *old) ? asprintf(&buf, "%s:%s", value, old)
+                          : asprintf(&buf, "%s", value);
+    if (n >= 0 && buf) setenv(name, buf, 1);
+    free(buf);
+}
+
+/* Không có terminal khi mở từ Finder / lúc đăng nhập: báo bằng hộp thoại. */
+static int alert(const char *msg) {
+    char *script = NULL;
+    fprintf(stderr, "VietType: %s\n", msg);
+    if (asprintf(&script, "display alert \"VietType\" message \"%s\" as critical", msg) < 0)
+        return 1;
+    execl("/usr/bin/osascript", "osascript", "-e", script, (char *)NULL);
+    return 1;
+}
+
+int main(int argc, char *argv[]) {
+    char exe[PATH_MAX], real[PATH_MAX], dir[PATH_MAX], script[PATH_MAX];
+    char py[PATH_MAX], lib[PATH_MAX], tmp[PATH_MAX];
+    uint32_t size = sizeof exe;
+    if (_NSGetExecutablePath(exe, &size) != 0 || !realpath(exe, real)) {
+        fprintf(stderr, "VietType: cannot resolve executable path\n");
+        return 1;
+    }
+    /* .../VietType.app/Contents/MacOS/VietType -> .../Contents/Resources/viettype_app.py */
+    /* dirname() có thể sửa chuỗi đầu vào: luôn đưa bản sao, giữ nguyên real. */
+    snprintf(tmp, sizeof tmp, "%s", real);
+    snprintf(dir, sizeof dir, "%s", dirname(tmp));       /* .../Contents/MacOS */
+    snprintf(tmp, sizeof tmp, "%s", dirname(dir));       /* .../Contents */
+    snprintf(script, sizeof script, "%s/Resources/viettype_app.py", tmp);
+
+    const char *prefixes[] = {"/opt/homebrew", "/usr/local", NULL};
+    const char *prefix = NULL;
+    for (int i = 0; prefixes[i]; i++) {
+        snprintf(py, sizeof py, "%s/bin/python3", prefixes[i]);
+        if (access(py, X_OK) == 0) { prefix = prefixes[i]; break; }
+    }
+    if (!prefix) return alert(MISSING_MSG);
+
+    snprintf(tmp, sizeof tmp, "%s/lib/girepository-1.0", prefix);
+    prepend_env("GI_TYPELIB_PATH", tmp);
+    snprintf(tmp, sizeof tmp, "%s/share", prefix);
+    prepend_env("XDG_DATA_DIRS", tmp);
+
+    char **args = calloc((size_t)argc + 2, sizeof *args);
+    if (!args) return 1;
+    args[1] = script;
+    for (int i = 1; i < argc; i++) args[i + 1] = argv[i];
+
+    /* opt/python3 = bản python3 mặc định của Homebrew, tự đổi khi brew nâng cấp. */
+    snprintf(lib, sizeof lib,
+             "%s/opt/python3/Frameworks/Python.framework/Versions/Current/Python", prefix);
+    void *h = dlopen(lib, RTLD_NOW | RTLD_GLOBAL);
+    py_bytes_main_fn py_main = h ? (py_bytes_main_fn)dlsym(h, "Py_BytesMain") : NULL;
+    if (py_main) {
+        args[0] = real;
+        return py_main(argc + 1, args);
+    }
+    fprintf(stderr, "VietType: embed libpython failed (%s), exec %s\n",
+            h ? "no Py_BytesMain" : dlerror(), py);
+
+    args[0] = py;
+    execv(py, args);
+    perror("VietType: execv python3");
+    return alert(MISSING_MSG);
+}
 LAUNCHER
+# rpath giống Python.app của Homebrew: typelib GTK tham chiếu dylib bằng tên trần
+# (libgobject-2.0.0.dylib), dyld tìm chúng qua LC_RPATH của file chạy chính.
+clang -O2 -Wall -Wextra -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+  -Wl,-rpath,/opt/homebrew/lib -Wl,-rpath,/usr/local/lib \
+  -o "$APP.app/Contents/MacOS/$APP" "$LAUNCHER_C"
 chmod +x "$APP.app/Contents/MacOS/$APP"
 
 cat > "$APP.app/Contents/Info.plist" <<PLIST
@@ -66,6 +155,7 @@ cat > "$APP.app/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleSignature</key><string>????</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSArchitecturePriority</key><array><string>arm64</string><string>x86_64</string></array>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSRequiresAquaSystemAppearance</key><false/>
 </dict>
