@@ -45,6 +45,15 @@ def is_autostart_mac():
     return os.path.exists(autostart_path())
 
 
+def autostart_argv_mac():
+    """ProgramArguments của LaunchAgent hiện có ([] nếu không có/đọc lỗi)."""
+    try:
+        with open(autostart_path(), 'rb') as f:
+            return list(plistlib.load(f).get('ProgramArguments') or [])
+    except Exception:
+        return []
+
+
 def set_autostart_mac(on, argv):
     """argv: list, e.g. [python, script] or [bundle_binary]."""
     p = autostart_path()
