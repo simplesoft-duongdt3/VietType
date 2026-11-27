@@ -38,6 +38,8 @@ SNAP_MAX_CHARS = 2_000_000  # giới hạn bộ nhớ cho các bước Ctrl+Z
 BIG_EDIT_CHARS = 8          # chèn/xoá >= N ký tự 1 lần = 1 bước Ctrl+Z riêng
                             # (dán, cắt, xoá/gõ đè vùng chọn luôn là bước riêng)
 OVERWRITE_MIN = 20          # xoá/đè >= N ký tự và >= nửa nội dung -> giữ bản cũ thành mục lịch sử riêng
+CHIP_ROWS = 2               # số dòng chip hiện cùng lúc (nhiều hơn thì cuộn dọc)
+CHIP_ROW_SPACING = 4        # khoảng cách giữa các dòng chip (px)
 
 
 def app_dir():
@@ -368,6 +370,7 @@ class VietTypeWindow(Gtk.Window):
         css.load_from_data(b'''
         .chip { border-radius: 12px; padding: 1px 10px; font-size: 11px; }
         .chip-add { border-radius: 12px; padding: 1px 10px; font-weight: bold; opacity: 0.8; }
+        .chips flowboxchild { padding: 0; }
         .mini { padding: 1px 8px; min-height: 22px; font-size: 11px; }
         ''')
         Gtk.StyleContext.add_provider_for_screen(
@@ -433,14 +436,27 @@ class VietTypeWindow(Gtk.Window):
         r.pack_start(hist_btn, False, False, 0)
         v.pack_start(r, False, False, 0)
 
-        # Mẫu câu dạng chips: scroll ngang + drag-drop sắp xếp
+        # Mẫu câu dạng chips: tự xuống dòng, hiện tối đa CHIP_ROWS dòng (nhiều hơn thì
+        # cuộn dọc) + drag-drop sắp xếp
         r2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        chip_sw = Gtk.ScrolledWindow()
-        chip_sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
-        chip_sw.set_min_content_height(30)
+        self.chip_sw = chip_sw = Gtk.ScrolledWindow()
+        chip_sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        chip_sw.set_min_content_height(26)            # _fit_chip_rows chỉnh theo chip thật
+        chip_sw.set_max_content_height(26)
         chip_sw.set_hexpand(True)
-        self.chip_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self._chip_area_h = 0
+        self._chip_fit_pending = False
+        self.chip_box = Gtk.FlowBox()
+        self.chip_box.get_style_context().add_class('chips')
+        self.chip_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.chip_box.set_homogeneous(False)
+        self.chip_box.set_max_children_per_line(100)
+        self.chip_box.set_column_spacing(4)
+        self.chip_box.set_row_spacing(CHIP_ROW_SPACING)
+        self.chip_box.set_valign(Gtk.Align.START)
         self.chip_box.set_border_width(1)
+        self.chip_box.set_can_focus(False)
+        self.chip_box.connect('size-allocate', self._on_chip_alloc)
         chip_sw.add(self.chip_box)
         r2.pack_start(chip_sw, True, True, 0)
         add = Gtk.Button(label='+')
@@ -471,11 +487,18 @@ class VietTypeWindow(Gtk.Window):
         if self._saved.get('dark'):
             self.dark_mode = True
             self.apply_theme()
+        # macOS bỏ qua set_keep_above gọi trước khi cửa sổ hiện (ghim đã lưu không có tác
+        # dụng lúc mở app) và có thể mất khi ẩn -> hiện lại: áp lại mỗi lần cửa sổ map.
+        self.connect('map-event', self._reapply_keep_above)
         self.connect('delete-event', self.on_close)
         self.connect('destroy', lambda *_a: self.save_window())
         # Lưu size realtime (debounce) để luôn là "latest", kể cả crash/kill
         self._save_timer = None
         self.connect('configure-event', self.on_configure)
+
+    def _reapply_keep_above(self, *_a):
+        GLib.idle_add(lambda: (self.set_keep_above(self.top_btn.get_active()), False)[-1])
+        return False
 
     def on_configure(self, *_a):
         if self._save_timer is not None:
@@ -853,11 +876,7 @@ class VietTypeWindow(Gtk.Window):
     def on_telex(self, sw, _p=None):
         self.telex_enabled = sw.get_active()
         self.update_status()
-        if self.indicator and hasattr(self.indicator, 'set_label'):
-            try:
-                self.indicator.set_label('VIE' if self.telex_enabled else 'EN', '')
-            except Exception:
-                pass
+        self.update_tray_mode()
 
     # --- nút ---
     def on_copy(self, _b):
@@ -910,8 +929,37 @@ class VietTypeWindow(Gtk.Window):
             chip.drag_dest_set(Gtk.DestDefaults.ALL, CHIP_TARGETS, Gdk.DragAction.MOVE)
             chip.connect('drag-data-get', self.on_chip_drag_get, idx)
             chip.connect('drag-data-received', self.on_chip_drag_received, idx)
-            self.chip_box.pack_start(chip, False, False, 0)
+            self.chip_box.insert(chip, -1)
+            chip.get_parent().set_can_focus(False)   # FlowBoxChild: để Tab/focus vào nút như cũ
         self.chip_box.show_all()
+        self._on_chip_alloc()
+
+    def _on_chip_alloc(self, *_a):
+        if not self._chip_fit_pending:
+            self._chip_fit_pending = True
+            GLib.idle_add(self._fit_chip_rows)
+
+    def _fit_chip_rows(self):
+        """Chiều cao vùng chip = số dòng chip thật (theo bề rộng hiện tại), tối đa
+        CHIP_ROWS dòng; nhiều hơn thì cuộn dọc. Chạy lại khi đổi cỡ cửa sổ."""
+        self._chip_fit_pending = False
+        kids = self.chip_box.get_children()
+        h = kids[0].get_allocation().height if kids else 0
+        if h <= 1:
+            h = kids[0].get_preferred_height()[1] if kids else 26
+        total = len({k.get_allocation().y for k in kids}) if kids else 1
+        rows = max(1, min(CHIP_ROWS, total))
+        target = rows * h + (rows - 1) * CHIP_ROW_SPACING + 2 * self.chip_box.get_border_width()
+        # Thanh cuộn dọc đòi chiều cao tối thiểu (~46px) -> chỉ bật khi thật sự có
+        # nhiều hơn CHIP_ROWS dòng; còn lại vẫn cuộn được bằng chuột nhưng không hiện thanh.
+        vpol = Gtk.PolicyType.AUTOMATIC if total > CHIP_ROWS else Gtk.PolicyType.EXTERNAL
+        if (target, vpol) != (self._chip_area_h, self.chip_sw.get_policy()[1]):
+            self._chip_area_h = target           # chỉ đặt khi đổi, tránh vòng lặp layout
+            self.chip_sw.set_policy(Gtk.PolicyType.NEVER, vpol)
+            self.chip_sw.set_max_content_height(-1)   # GTK đòi min <= max: bỏ max trước
+            self.chip_sw.set_min_content_height(target)
+            self.chip_sw.set_max_content_height(target)
+        return False
 
     def _copy_text(self, text, msg):
         Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(text, -1)
@@ -1092,6 +1140,9 @@ class VietTypeWindow(Gtk.Window):
 
     # --- top bar ---
     def setup_indicator(self):
+        if _mac is not None:
+            self.setup_status_icon_mac()
+            return
         try:
             gi.require_version('AyatanaAppIndicator3', '0.1')
             from gi.repository import AyatanaAppIndicator3 as A
@@ -1106,41 +1157,111 @@ class VietTypeWindow(Gtk.Window):
                                              A.IndicatorCategory.APPLICATION_STATUS)
             self.indicator.set_status(A.IndicatorStatus.ACTIVE)
             self.indicator.set_label('VIE', '')
-            m = Gtk.Menu()
-            mi = Gtk.MenuItem(label='Hiện / Ẩn')
-            mi.connect('activate', lambda *a: self.hide() if self.is_visible() else self.present())
-            m.append(mi)
-            mt = Gtk.CheckMenuItem(label='Telex')
-            mt.set_active(True)
-            mt.connect('toggled', lambda x: self.telex_sw.set_active(x.get_active()))
-            m.append(mt)
-            mf = Gtk.CheckMenuItem(label='Mờ (trong suốt)')
-            mf.connect('toggled', lambda x: self.fade_btn.set_active(x.get_active()))
-            m.append(mf)
-            ma = Gtk.CheckMenuItem(label='Tự chạy khi mở máy')
-            ma.set_active(is_autostart())
-            ma.connect('toggled', lambda x: (set_autostart(x.get_active()),
-                                             self.auto_chk.set_active(x.get_active())))
-            m.append(ma)
-            md = Gtk.CheckMenuItem(label='Chế độ tối')
-            md.set_active(self.dark_mode)
-            md.connect('toggled', lambda x: (self.on_theme_toggle()
-                                             if x.get_active() != self.dark_mode else None))
-            m.append(md)
-            self._theme_menu = md
-            mh = Gtk.MenuItem(label='Lịch sử…')
-            mh.connect('activate', lambda *a: (self.present(), self.show_history()))
-            m.append(mh)
-            mi_about = Gtk.MenuItem(label=f'Giới thiệu VietType v{APP_VERSION}')
-            mi_about.connect('activate', self.show_about)
-            m.append(mi_about)
-            mq = Gtk.MenuItem(label='Thoát')
-            mq.connect('activate', lambda *a: Gtk.main_quit())
-            m.append(mq)
-            m.show_all()
-            self.indicator.set_menu(m)
+            self.indicator.set_menu(self.build_tray_menu())
         except Exception:
             self.indicator = None
+
+    # --- icon trên menu bar macOS (thay cho AppIndicator của Ubuntu) ---
+    @staticmethod
+    def _status_pixbuf(text):
+        """Icon menu bar giống viettype.svg, chữ VIE/EN theo chế độ gõ."""
+        size = 24 if len(text) <= 2 else 20
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">'
+               '<rect x="2" y="2" width="60" height="60" rx="12" fill="#2e7cf6"/>'
+               f'<text x="32" y="40" font-family="Helvetica, Arial, sans-serif" font-size="{size}" '
+               f'font-weight="bold" fill="white" text-anchor="middle">{text}</text>'
+               '<rect x="14" y="46" width="36" height="3" rx="1.5" fill="white" opacity="0.85"/>'
+               '</svg>').encode()
+        loader = GdkPixbuf.PixbufLoader.new_with_type('svg')
+        loader.set_size(44, 44)
+        loader.write(svg)
+        loader.close()
+        return loader.get_pixbuf()
+
+    def setup_status_icon_mac(self):
+        try:
+            icon = Gtk.StatusIcon.new_from_pixbuf(self._status_pixbuf('VIE'))
+            icon.set_tooltip_text('VietType — Telex: bật')
+            icon.set_visible(True)
+            self._tray_menu = self.build_tray_menu()
+
+            def popup(ic, button=1, time=None):
+                if time is None:
+                    time = Gtk.get_current_event_time()
+                self._tray_menu.popup(None, None, Gtk.StatusIcon.position_menu, ic, button, time)
+
+            # Chuột trái hoặc phải đều mở menu (giống icon menu bar khác trên macOS)
+            icon.connect('activate', lambda ic: popup(ic))
+            icon.connect('popup-menu', lambda ic, b, t: popup(ic, b, t))
+            self.indicator = icon
+        except Exception as e:
+            print('menu bar icon:', e)
+            self.indicator = None
+
+    def update_tray_mode(self):
+        if self.indicator is None:
+            return
+        try:
+            if hasattr(self.indicator, 'set_label'):          # AppIndicator (Ubuntu)
+                self.indicator.set_label('VIE' if self.telex_enabled else 'EN', '')
+            elif isinstance(self.indicator, Gtk.StatusIcon):  # menu bar macOS
+                self.indicator.set_from_pixbuf(
+                    self._status_pixbuf('VIE' if self.telex_enabled else 'EN'))
+                self.indicator.set_tooltip_text(
+                    'VietType — Telex: ' + ('bật' if self.telex_enabled else 'tắt'))
+        except Exception:
+            pass
+
+    def build_tray_menu(self):
+        m = Gtk.Menu()
+        mi = Gtk.MenuItem(label='Hiện / Ẩn')
+        mi.connect('activate', lambda *a: self.hide() if self.is_visible() else self.present())
+        m.append(mi)
+        mt = Gtk.CheckMenuItem(label='Telex')
+        mt.set_active(True)
+        mt.connect('toggled', lambda x: self.telex_sw.set_active(x.get_active()))
+        m.append(mt)
+        mf = Gtk.CheckMenuItem(label='Mờ (trong suốt)')
+        mf.connect('toggled', lambda x: self.fade_btn.set_active(x.get_active()))
+        m.append(mf)
+        ma = Gtk.CheckMenuItem(label='Tự chạy khi mở máy')
+        ma.set_active(is_autostart())
+        ma.connect('toggled', lambda x: (set_autostart(x.get_active()),
+                                         self.auto_chk.set_active(x.get_active())))
+        m.append(ma)
+        md = Gtk.CheckMenuItem(label='Chế độ tối')
+        md.set_active(self.dark_mode)
+        md.connect('toggled', lambda x: (self.on_theme_toggle()
+                                         if x.get_active() != self.dark_mode else None))
+        m.append(md)
+        self._theme_menu = md
+        mh = Gtk.MenuItem(label='Lịch sử…')
+        mh.connect('activate', lambda *a: (self.present(), self.show_history()))
+        m.append(mh)
+        mi_about = Gtk.MenuItem(label=f'Giới thiệu VietType v{APP_VERSION}')
+        mi_about.connect('activate', self.show_about)
+        m.append(mi_about)
+        mq = Gtk.MenuItem(label='Thoát')
+        mq.connect('activate', lambda *a: self.quit_app())
+        m.append(mq)
+        m.show_all()
+        return m
+
+    def quit_app(self):
+        """Thoát hẳn: lưu cửa sổ rồi dừng main loop (main() chốt lịch sử + đóng DB)."""
+        if getattr(self, '_quitting', False):
+            return
+        self._quitting = True
+        self.save_window()
+        # Hộp thoại đang dlg.run() có vòng lặp riêng: đóng (như bấm huỷ) để không chặn thoát
+        for win in Gtk.Window.list_toplevels():
+            if isinstance(win, Gtk.Dialog) and win.get_visible():
+                try:
+                    win.response(Gtk.ResponseType.DELETE_EVENT)
+                    win.destroy()
+                except Exception:
+                    pass
+        Gtk.main_quit()
 
     def on_close(self, *a):
         self.save_window()
@@ -1394,6 +1515,12 @@ def main():
     # Bản thứ hai mở ra gửi SIGUSR1: đưa cửa sổ đang chạy lên trước (kể cả khi đang ẩn/thu nhỏ)
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1,
                          lambda *a: (w.deiconify(), w.present(), True)[-1])
+    # Thoát thật (không ẩn xuống menu bar) khi hệ thống yêu cầu: SIGTERM (launchd,
+    # đăng xuất) và Apple Event 'quit' của macOS (tắt máy, khởi động lại, Cmd+Q từ Dock).
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM,
+                         lambda *a: (w.quit_app(), False)[-1])
+    if _mac is not None:
+        _mac.install_quit_handler(lambda: GLib.idle_add(lambda: (w.quit_app(), False)[-1]))
     w.show_all()
     Gtk.main()
     # Thoát từ top bar không qua delete-event: chốt bản nháp cuối

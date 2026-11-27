@@ -45,6 +45,44 @@ def is_autostart_mac():
     return os.path.exists(autostart_path())
 
 
+_quit_handler_ref = None  # giữ callback ctypes sống suốt đời tiến trình
+
+
+def install_quit_handler(on_quit):
+    """Nhận Apple Event 'quit' (tắt máy / đăng xuất / khởi động lại, Cmd+Q từ Dock,
+    `tell application "VietType" to quit`). GTK3 không xử lý event này nên macOS
+    báo lỗi -1708 và bị chặn tắt máy. on_quit() chạy trên main thread; trả về
+    noErr ngay để macOS tiếp tục tắt máy. True nếu cài được."""
+    global _quit_handler_ref
+    import ctypes
+    try:
+        cs = ctypes.CDLL('/System/Library/Frameworks/CoreServices.framework/CoreServices')
+    except OSError as e:
+        print('quit handler:', e)
+        return False
+    handler_t = ctypes.CFUNCTYPE(ctypes.c_int16, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+    install = cs.AEInstallEventHandler
+    install.argtypes = [ctypes.c_uint32, ctypes.c_uint32, handler_t, ctypes.c_void_p, ctypes.c_ubyte]
+    install.restype = ctypes.c_int16
+
+    def fourcc(s):
+        return int.from_bytes(s.encode('ascii'), 'big')
+
+    def _handler(_event, _reply, _refcon):
+        try:
+            on_quit()
+        except Exception as e:
+            print('quit handler:', e)
+        return 0  # noErr
+
+    _quit_handler_ref = handler_t(_handler)
+    err = install(fourcc('aevt'), fourcc('quit'), _quit_handler_ref, None, 0)
+    if err != 0:
+        print('quit handler: AEInstallEventHandler error', err)
+        return False
+    return True
+
+
 def autostart_argv_mac():
     """ProgramArguments của LaunchAgent hiện có ([] nếu không có/đọc lỗi)."""
     try:
