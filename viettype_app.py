@@ -25,7 +25,7 @@ except Exception:
     _mac = None
 
 APP_ID = 'vn.viettype.pad'
-APP_VERSION = '2.6.9'
+APP_VERSION = '3.6.9'
 CONFIG_DIR = os.path.expanduser('~/.config/viettype')
 SAMPLES_FILE = os.path.join(CONFIG_DIR, 'samples.json')
 AUTOSTART_FILE = os.path.expanduser('~/.config/autostart/viettype.desktop')
@@ -40,6 +40,14 @@ BIG_EDIT_CHARS = 8          # chèn/xoá >= N ký tự 1 lần = 1 bước Ctrl+
 OVERWRITE_MIN = 20          # xoá/đè >= N ký tự và >= nửa nội dung -> giữ bản cũ thành mục lịch sử riêng
 CHIP_ROWS = 2               # số dòng chip hiện cùng lúc (nhiều hơn thì cuộn dọc)
 CHIP_ROW_SPACING = 4        # khoảng cách giữa các dòng chip (px)
+VIEW_WINDOW, VIEW_BUBBLE, VIEW_HIDDEN = 'window', 'bubble', 'hidden'   # 3 chế độ hiện
+VIEW_MODES = (VIEW_WINDOW, VIEW_BUBBLE, VIEW_HIDDEN)
+LABEL_TELEX_ON = 'VCD'      # chữ trên menu bar / top bar / nút nổi khi bật Telex
+LABEL_TELEX_OFF = 'EN'      # ... khi tắt Telex
+BUBBLE_SIZE = 44            # cỡ nút nổi (px)
+BUBBLE_DRAG_PX = 4          # nhấn rồi di chuột >= N px = kéo nút, không phải click
+BUBBLE_OPACITY = 0.55       # độ đục nút nổi lúc thường (nhìn xuyên thấy bên dưới)
+BUBBLE_OPACITY_HOVER = 1.0  # khi rê chuột vào nút
 
 
 def app_dir():
@@ -140,6 +148,11 @@ def migrate_autostart_mac():
     Không đụng LaunchAgent trỏ tới bản cài khác còn chạy được."""
     if _mac is None or not _mac.is_autostart_mac():
         return
+    # Chạy từ VietType.app: chuyển LaunchAgent cũ sang Login Items của macOS
+    if _mac.login_item_status() is not None:
+        if os.path.exists(_mac.autostart_path()):
+            _mac.set_autostart_mac(True, mac_autostart_argv())
+        return
     cur = _mac.autostart_argv_mac()
     want = mac_autostart_argv()
     if cur == want:
@@ -221,11 +234,29 @@ def load_samples():
     return []
 
 
+def ensure_private_dir(path):
+    """Thư mục cấu hình chỉ chủ máy đọc được (mẫu câu có thể chứa thông tin riêng)."""
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+
+
+def write_private(path, text):
+    """Ghi file quyền 0600, ghi ra file tạm rồi đổi tên để không hỏng file khi máy tắt ngang."""
+    ensure_private_dir(os.path.dirname(path))
+    tmp = path + '.tmp'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        f.write(text)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
 def save_samples(s):
     try:
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        with open(SAMPLES_FILE, 'w', encoding='utf-8') as f:
-            json.dump(s, f, ensure_ascii=False, indent=2)
+        write_private(SAMPLES_FILE, json.dumps(s, ensure_ascii=False, indent=2))
     except Exception as e:
         print('save:', e)
 
@@ -242,15 +273,185 @@ def load_window_state():
     return {}
 
 
-def save_window_state(w, h, x, y, keep_above=False, dark=False, history=True):
+def save_window_state(w, h, x, y, keep_above=False, dark=False, history=True,
+                      view_mode=None, bubble_pos=None):
     try:
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        with open(STATE_FILE, 'w', encoding='utf-8') as f:
-            json.dump({'width': w, 'height': h, 'x': x, 'y': y,
-                       'keep_above': bool(keep_above), 'dark': bool(dark),
-                       'history': bool(history)}, f)
+        d = {'width': w, 'height': h, 'x': x, 'y': y,
+             'keep_above': bool(keep_above), 'dark': bool(dark),
+             'history': bool(history)}
+        if view_mode in VIEW_MODES:
+            d['view_mode'] = view_mode
+        if bubble_pos is not None:
+            d['bubble_x'], d['bubble_y'] = int(bubble_pos[0]), int(bubble_pos[1])
+        write_private(STATE_FILE, json.dumps(d))
     except Exception as e:
         print('state:', e)
+
+
+def badge_pixbuf(text, px, round_shape=False, opacity=1.0):
+    """Icon xanh chữ trắng (VCD/EN) như viettype.svg, vẽ ở px điểm ảnh.
+    round_shape=True: hình tròn có viền trắng (nút nổi). opacity: độ đục cả hình."""
+    fs = 24 if len(text) <= 2 else 20
+    if round_shape:
+        shape = ('<circle cx="32" cy="32" r="29" fill="#2e7cf6" stroke="white" '
+                 'stroke-width="3" stroke-opacity="0.9"/>')
+        ty, bar = 39, ''
+    else:
+        shape = '<rect x="2" y="2" width="60" height="60" rx="12" fill="#2e7cf6"/>'
+        ty = 40
+        bar = '<rect x="14" y="46" width="36" height="3" rx="1.5" fill="white" opacity="0.85"/>'
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">'
+           f'<g opacity="{opacity:.2f}">{shape}<text x="32" y="{ty}" '
+           'font-family="Helvetica, Arial, sans-serif" '
+           f'font-size="{fs}" font-weight="bold" fill="white" text-anchor="middle">{text}</text>'
+           f'{bar}</g></svg>').encode()
+    loader = GdkPixbuf.PixbufLoader.new_with_type('svg')
+    loader.set_size(px, px)
+    loader.write(svg)
+    loader.close()
+    return loader.get_pixbuf()
+
+
+class FloatingButton(Gtk.Window):
+    """Nút nổi nhỏ luôn trên cùng: click = mở cửa sổ, kéo = di chuyển,
+    chuột phải = menu (giống icon menu bar / top bar)."""
+
+    def __init__(self, owner):
+        super().__init__(title='VietType')
+        self.owner = owner
+        self._press = None          # (x_root, y_root) khi nhấn chuột trái, chưa kéo
+        self.set_decorated(False)
+        self.set_resizable(False)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_size_request(BUBBLE_SIZE, BUBBLE_SIZE)
+        self.set_default_size(BUBBLE_SIZE, BUBBLE_SIZE)
+        try:
+            self.set_wmclass('VietType', 'VietType')
+        except Exception:
+            pass
+        screen = self.get_screen()
+        vis = screen.get_rgba_visual()
+        # Nền trong suốt -> nút tròn. macOS bỏ qua set_opacity với cửa sổ RGBA nên khi đó
+        # độ trong suốt được vẽ thẳng vào ảnh; không có RGBA thì dùng set_opacity.
+        self._rgba = vis is not None and screen.is_composited()
+        if self._rgba:
+            self.set_visual(vis)
+            self.set_app_paintable(True)
+        self._text = LABEL_TELEX_ON
+        self._hover = False
+        self.get_style_context().add_class('vt-bubble')
+        self.img = Gtk.Image()
+        box = Gtk.EventBox()
+        box.set_visible_window(False)
+        box.add(self.img)
+        box.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK
+                       | Gdk.EventMask.BUTTON1_MOTION_MASK
+                       | Gdk.EventMask.ENTER_NOTIFY_MASK | Gdk.EventMask.LEAVE_NOTIFY_MASK)
+        box.connect('button-press-event', self._on_press)
+        box.connect('button-release-event', self._on_release)
+        box.connect('motion-notify-event', self._on_motion)
+        # Trong suốt lúc thường để thấy nội dung bên dưới, rõ hẳn khi rê chuột vào
+        box.connect('enter-notify-event', self._on_enter)
+        box.connect('leave-notify-event', self._on_leave)
+        self.add(box)
+        self.set_tooltip_text('VietType — click: mở • kéo: di chuyển • chuột phải: menu')
+        # macOS bỏ qua keep_above gọi trước khi hiện -> đặt lại mỗi lần map (cả độ trong suốt)
+        self.connect('map-event', lambda *a: GLib.idle_add(
+            lambda: (self.set_keep_above(True), self._render(), False)[-1]))
+        self.connect('configure-event', self._on_configure)
+        self.set_keep_above(True)
+        self.set_text(LABEL_TELEX_ON)
+        box.show_all()
+
+    def set_text(self, text):
+        self._text = text
+        self._render()
+
+    def _render(self):
+        alpha = BUBBLE_OPACITY_HOVER if self._hover else BUBBLE_OPACITY
+        if not self._rgba:
+            self.set_opacity(alpha)
+            alpha = 1.0
+        scale = max(1, self.get_scale_factor())
+        pb = badge_pixbuf(self._text, BUBBLE_SIZE * scale, round_shape=True, opacity=alpha)
+        if scale > 1:
+            try:                                  # nét trên màn Retina
+                self.img.set_from_surface(Gdk.cairo_surface_create_from_pixbuf(pb, scale, None))
+                return
+            except Exception:
+                pb = pb.scale_simple(BUBBLE_SIZE, BUBBLE_SIZE, GdkPixbuf.InterpType.BILINEAR)
+        self.img.set_from_pixbuf(pb)
+
+    def show_at(self, pos):
+        x, y = self._valid_pos(pos)
+        self.move(x, y)
+        self.show()
+        self.present()
+
+    def _valid_pos(self, pos):
+        """Vị trí đã lưu nếu còn nằm trong một màn hình, không thì mép phải màn hình chính."""
+        disp = Gdk.Display.get_default()
+        if pos is not None:
+            x, y = pos
+            for i in range(disp.get_n_monitors()):
+                g = disp.get_monitor(i).get_geometry()
+                if g.x <= x + BUBBLE_SIZE // 2 < g.x + g.width and \
+                        g.y <= y + BUBBLE_SIZE // 2 < g.y + g.height:
+                    return int(x), int(y)
+        mon = disp.get_primary_monitor() or (disp.get_monitor(0) if disp.get_n_monitors() else None)
+        if mon is None:                      # màn hình đang ngủ/chưa có monitor: giữ vị trí cũ
+            return tuple(int(v) for v in pos) if pos is not None else (100, 100)
+        wa = mon.get_workarea()
+        return wa.x + wa.width - BUBBLE_SIZE - 16, wa.y + wa.height // 2 - BUBBLE_SIZE // 2
+
+    def _on_press(self, _w, event):
+        if event.button == 1:
+            self._press = (event.x_root, event.y_root)
+            return True
+        if event.button == 3:
+            self.owner.popup_bubble_menu(event)
+            return True
+        return False
+
+    def _on_motion(self, _w, event):
+        if self._press is None:
+            return False
+        dx, dy = event.x_root - self._press[0], event.y_root - self._press[1]
+        if dx * dx + dy * dy >= BUBBLE_DRAG_PX * BUBBLE_DRAG_PX:
+            x0, y0 = self._press
+            self._press = None                    # đã thành kéo, nhả chuột không mở cửa sổ
+            try:
+                self.begin_move_drag(1, int(x0), int(y0), event.time)
+            except Exception:
+                pass
+        return True
+
+    def _on_release(self, _w, event):
+        if event.button == 1 and self._press is not None:
+            self._press = None
+            self.owner.set_view(VIEW_WINDOW)
+            return True
+        return False
+
+    def _on_enter(self, *_a):
+        if not self._hover:
+            self._hover = True
+            self._render()
+        return False
+
+    def _on_leave(self, _w, event):
+        # Rời vào ô con (tooltip, ảnh) không tính là rời nút
+        if event.detail != Gdk.NotifyType.INFERIOR and self._hover:
+            self._hover = False
+            self._render()
+        return False
+
+    def _on_configure(self, *_a):
+        if self.get_visible():
+            self.owner.bubble_pos = self.get_position()
+            self.owner.on_configure()
+        return False
 
 
 class VietTypeWindow(Gtk.Window):
@@ -261,7 +462,10 @@ class VietTypeWindow(Gtk.Window):
             self.set_wmclass('VietType', 'VietType')
         except Exception:
             pass
-        self._theme_menu = None
+        self._theme_menus = []      # mục "Chế độ tối" trong menu menu bar + menu nút nổi
+        self._view_items = []       # (mode, RadioMenuItem) của 3 chế độ hiện, mọi menu
+        self._view_syncing = False
+        self.bubble = None
         ip = icon_path()
         if ip:
             try:
@@ -307,6 +511,13 @@ class VietTypeWindow(Gtk.Window):
         self._hist_last = None      # nội dung đã lưu lần cuối (tránh lưu lặp)
         # Lịch sử nội dung: 1 dòng / bản nháp, lưu sau khi ngừng gõ
         self.history_on = bool(self._saved.get('history', True))
+        # Chế độ hiện (cửa sổ / nút nổi / ẩn) + vị trí nút nổi lần trước
+        vm = self._saved.get('view_mode')
+        self.view_mode = vm if vm in VIEW_MODES else VIEW_WINDOW
+        try:
+            self.bubble_pos = (int(self._saved['bubble_x']), int(self._saved['bubble_y']))
+        except (KeyError, TypeError, ValueError):
+            self.bubble_pos = None
         self._hist_id = None
         self._hist_timer = None
         try:
@@ -349,7 +560,7 @@ class VietTypeWindow(Gtk.Window):
         self.hide_btn.set_always_show_image(True)
         self.hide_btn.set_relief(Gtk.ReliefStyle.NONE)
         self.hide_btn.set_focus_on_click(False)
-        self.hide_btn.set_tooltip_text('Ẩn xuống top bar (mở lại từ icon VIE)')
+        self.hide_btn.set_tooltip_text('Thu nhỏ thành nút nổi (click nút để mở lại, kéo để di chuyển)')
         self.hide_btn.connect('clicked', self.on_hide_clicked)
         hb.pack_end(self.hide_btn)
 
@@ -371,6 +582,7 @@ class VietTypeWindow(Gtk.Window):
         .chip { border-radius: 12px; padding: 1px 10px; font-size: 11px; }
         .chip-add { border-radius: 12px; padding: 1px 10px; font-weight: bold; opacity: 0.8; }
         .chips flowboxchild { padding: 0; }
+        window.vt-bubble { background-color: transparent; }
         .mini { padding: 1px 8px; min-height: 22px; font-size: 11px; }
         ''')
         Gtk.StyleContext.add_provider_for_screen(
@@ -467,10 +679,12 @@ class VietTypeWindow(Gtk.Window):
         r2.pack_start(add, False, False, 0)
         v.pack_start(r2, False, False, 0)
 
-        # Tự chạy cùng Ubuntu
+        # Tự chạy khi đăng nhập (Ubuntu: autostart .desktop, macOS: Login Items)
         self.auto_chk = Gtk.CheckButton(label='Tự chạy khi mở máy (autostart)')
         self.auto_chk.set_active(is_autostart())
-        self.auto_chk.set_tooltip_text('Bật = tự mở VietType mỗi lần đăng nhập Ubuntu')
+        self.auto_chk.set_tooltip_text(
+            'Bật = tự mở VietType mỗi lần đăng nhập'
+            + (' (Login Items của macOS)' if _mac is not None else ''))
         self.auto_chk.connect('toggled', self.on_autostart)
         self.auto_chk.connect('button-press-event', self._on_press_drag)
         v.pack_start(self.auto_chk, False, False, 0)
@@ -481,6 +695,7 @@ class VietTypeWindow(Gtk.Window):
 
         self.refresh()
         self.setup_indicator()
+        self.bubble = FloatingButton(self)
         # Khôi phục trạng thái ghim (pin) + chế độ tối lần trước
         if self._saved.get('keep_above'):
             self.top_btn.set_active(True)
@@ -519,7 +734,9 @@ class VietTypeWindow(Gtk.Window):
             save_window_state(w, h, x, y,
                               keep_above=self.top_btn.get_active(),
                               dark=self.dark_mode,
-                              history=self.history_on)
+                              history=self.history_on,
+                              view_mode=self.view_mode,
+                              bubble_pos=self.bubble_pos)
         except Exception as e:
             print('state:', e)
 
@@ -536,9 +753,9 @@ class VietTypeWindow(Gtk.Window):
     def on_theme_toggle(self, _b=None):
         self.dark_mode = not self.dark_mode
         self.apply_theme()
-        if self._theme_menu is not None and \
-                self._theme_menu.get_active() != self.dark_mode:
-            self._theme_menu.set_active(self.dark_mode)
+        for md in self._theme_menus:
+            if md.get_active() != self.dark_mode:
+                md.set_active(self.dark_mode)
         self.save_window()
 
     # --- Telex ---
@@ -902,11 +1119,48 @@ class VietTypeWindow(Gtk.Window):
             pass
 
     def on_hide_clicked(self, _b):
-        self.save_window()
-        if self.indicator is not None:
-            self.hide()
+        self.set_view(VIEW_BUBBLE)
+
+    # --- 3 chế độ hiện: cửa sổ / nút nổi / ẩn (chỉ còn icon menu bar / top bar) ---
+    def set_view(self, mode):
+        if mode == VIEW_HIDDEN and self.indicator is None:
+            mode = VIEW_BUBBLE      # không có icon menu bar/top bar thì ẩn hẳn = mất đường mở lại
+        if self.get_visible():
+            self.save_window()      # giữ vị trí/cỡ cửa sổ trước khi ẩn
+        self.view_mode = mode
+        if mode == VIEW_WINDOW:
+            self.bubble.hide()
+            self.deiconify()
+            self.present()
         else:
-            self.iconify()
+            self.flush_history()
+            self.hide()
+            if mode == VIEW_BUBBLE:
+                self.bubble.show_at(self.bubble_pos)
+            else:
+                self.bubble.hide()
+        self._sync_view_menu()
+        self.save_window()
+
+    def _sync_view_menu(self):
+        self._view_syncing = True
+        try:
+            for mode, item in self._view_items:
+                if item.get_active() != (mode == self.view_mode):
+                    item.set_active(mode == self.view_mode)
+        finally:
+            self._view_syncing = False
+
+    def _on_view_item(self, item, mode):
+        if item.get_active() and not self._view_syncing and mode != self.view_mode:
+            self.set_view(mode)
+
+    def popup_bubble_menu(self, event):
+        if getattr(self, '_bubble_menu', None) is None:
+            self._bubble_menu = self.build_tray_menu()
+            self._bubble_menu.attach_to_widget(self.bubble, None)
+        self._bubble_menu.popup_at_widget(self.bubble, Gdk.Gravity.SOUTH_WEST,
+                                          Gdk.Gravity.NORTH_WEST, event)
 
     def on_autostart(self, chk):
         ok = set_autostart(chk.get_active())
@@ -1156,7 +1410,7 @@ class VietTypeWindow(Gtk.Window):
             self.indicator = A.Indicator.new(APP_ID, 'accessories-text-editor',
                                              A.IndicatorCategory.APPLICATION_STATUS)
             self.indicator.set_status(A.IndicatorStatus.ACTIVE)
-            self.indicator.set_label('VIE', '')
+            self.indicator.set_label(LABEL_TELEX_ON, '')
             self.indicator.set_menu(self.build_tray_menu())
         except Exception:
             self.indicator = None
@@ -1164,26 +1418,23 @@ class VietTypeWindow(Gtk.Window):
     # --- icon trên menu bar macOS (thay cho AppIndicator của Ubuntu) ---
     @staticmethod
     def _status_pixbuf(text):
-        """Icon menu bar giống viettype.svg, chữ VIE/EN theo chế độ gõ."""
-        size = 24 if len(text) <= 2 else 20
-        svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">'
-               '<rect x="2" y="2" width="60" height="60" rx="12" fill="#2e7cf6"/>'
-               f'<text x="32" y="40" font-family="Helvetica, Arial, sans-serif" font-size="{size}" '
-               f'font-weight="bold" fill="white" text-anchor="middle">{text}</text>'
-               '<rect x="14" y="46" width="36" height="3" rx="1.5" fill="white" opacity="0.85"/>'
-               '</svg>').encode()
-        loader = GdkPixbuf.PixbufLoader.new_with_type('svg')
-        loader.set_size(44, 44)
-        loader.write(svg)
-        loader.close()
-        return loader.get_pixbuf()
+        """Ảnh cho GtkStatusIcon (chỉ dùng khi không tạo được mục chữ native)."""
+        return badge_pixbuf(text, 44)
 
     def setup_status_icon_mac(self):
+        self._tray_menu = self.build_tray_menu()
+        # Mục chữ native (NSStatusItem): cùng font/màu với menu bar, tự đổi sáng/tối
         try:
-            icon = Gtk.StatusIcon.new_from_pixbuf(self._status_pixbuf('VIE'))
+            self.indicator = _mac.MacStatusItem(LABEL_TELEX_ON, self._popup_tray_at)
+            self.indicator.set_tooltip('VietType — Telex: bật')
+            return
+        except Exception as e:
+            print('menu bar text item:', e)
+        # Dự phòng: icon ảnh qua GtkStatusIcon
+        try:
+            icon = Gtk.StatusIcon.new_from_pixbuf(self._status_pixbuf(LABEL_TELEX_ON))
             icon.set_tooltip_text('VietType — Telex: bật')
             icon.set_visible(True)
-            self._tray_menu = self.build_tray_menu()
 
             def popup(ic, button=1, time=None):
                 if time is None:
@@ -1198,25 +1449,56 @@ class VietTypeWindow(Gtk.Window):
             print('menu bar icon:', e)
             self.indicator = None
 
+    def _popup_tray_at(self, x, y):
+        """Mở menu ngay dưới mục chữ trên menu bar (x, y: góc dưới-trái của mục)."""
+        # Menu GTK cần một cửa sổ GTK làm mốc: cửa sổ 1x1 trong suốt đặt ngay dưới mục chữ
+        a = getattr(self, '_tray_anchor', None)
+        if a is None:
+            a = self._tray_anchor = Gtk.Window(type=Gtk.WindowType.POPUP)
+            a.set_size_request(1, 1)
+            a.set_opacity(0)
+            self._tray_menu.attach_to_widget(a, None)
+            self._tray_menu.connect('deactivate', lambda *_: a.hide())
+        a.move(x, max(0, y - 1))
+        a.show()
+        self._tray_menu.popup_at_widget(a, Gdk.Gravity.SOUTH_WEST, Gdk.Gravity.NORTH_WEST, None)
+
     def update_tray_mode(self):
+        text = LABEL_TELEX_ON if self.telex_enabled else LABEL_TELEX_OFF
+        tip = 'VietType — Telex: ' + ('bật' if self.telex_enabled else 'tắt')
+        if self.bubble is not None:
+            try:
+                self.bubble.set_text(text)
+            except Exception:
+                pass
         if self.indicator is None:
             return
         try:
             if hasattr(self.indicator, 'set_label'):          # AppIndicator (Ubuntu)
-                self.indicator.set_label('VIE' if self.telex_enabled else 'EN', '')
-            elif isinstance(self.indicator, Gtk.StatusIcon):  # menu bar macOS
-                self.indicator.set_from_pixbuf(
-                    self._status_pixbuf('VIE' if self.telex_enabled else 'EN'))
-                self.indicator.set_tooltip_text(
-                    'VietType — Telex: ' + ('bật' if self.telex_enabled else 'tắt'))
+                self.indicator.set_label(text, '')
+            elif _mac is not None and isinstance(self.indicator, _mac.MacStatusItem):
+                self.indicator.set_text(text)                 # chữ menu bar macOS
+                self.indicator.set_tooltip(tip)
+            elif isinstance(self.indicator, Gtk.StatusIcon):  # dự phòng: icon ảnh
+                self.indicator.set_from_pixbuf(self._status_pixbuf(text))
+                self.indicator.set_tooltip_text(tip)
         except Exception:
             pass
 
     def build_tray_menu(self):
         m = Gtk.Menu()
-        mi = Gtk.MenuItem(label='Hiện / Ẩn')
-        mi.connect('activate', lambda *a: self.hide() if self.is_visible() else self.present())
-        m.append(mi)
+        where = 'menu bar' if _mac is not None else 'top bar'
+        group = None
+        for mode, label in ((VIEW_WINDOW, 'Hiện cửa sổ'),
+                            (VIEW_BUBBLE, 'Nút nổi (thu nhỏ)'),
+                            (VIEW_HIDDEN, f'Ẩn (chỉ icon {where})')):
+            it = Gtk.RadioMenuItem.new_with_label_from_widget(group, label)
+            group = it
+            it.set_active(mode == self.view_mode)
+            it.connect('toggled', self._on_view_item, mode)
+            self._view_items.append((mode, it))
+            m.append(it)
+        m.append(Gtk.SeparatorMenuItem())
         mt = Gtk.CheckMenuItem(label='Telex')
         mt.set_active(True)
         mt.connect('toggled', lambda x: self.telex_sw.set_active(x.get_active()))
@@ -1234,7 +1516,7 @@ class VietTypeWindow(Gtk.Window):
         md.connect('toggled', lambda x: (self.on_theme_toggle()
                                          if x.get_active() != self.dark_mode else None))
         m.append(md)
-        self._theme_menu = md
+        self._theme_menus.append(md)
         mh = Gtk.MenuItem(label='Lịch sử…')
         mh.connect('activate', lambda *a: (self.present(), self.show_history()))
         m.append(mh)
@@ -1267,7 +1549,7 @@ class VietTypeWindow(Gtk.Window):
         self.save_window()
         self.flush_history()
         if self.indicator is not None:
-            self.hide()
+            self.set_view(VIEW_HIDDEN)      # nút đóng = ẩn, mở lại từ icon menu bar / top bar
             return True
         return False
 
@@ -1275,7 +1557,9 @@ class VietTypeWindow(Gtk.Window):
         dlg = Gtk.AboutDialog(transient_for=self, modal=True)
         dlg.set_program_name('VietType')
         dlg.set_version(APP_VERSION)
-        dlg.set_comments('Khung gõ Telex nhỏ cho Ubuntu: ô nhập live,\nchips mẫu câu, always-on-top, top-bar indicator.')
+        dlg.set_comments('Khung gõ Telex nhỏ gọn cho Ubuntu và macOS: gõ live,\n'
+                         'chips mẫu câu, luôn trên cùng, nút nổi, icon '
+                         + ('menu bar.' if _mac is not None else 'top bar.'))
         dlg.set_website('https://github.com/')
         ip = icon_path()
         if ip:
@@ -1467,8 +1751,9 @@ def acquire_single_instance():
     history.db), báo nó hiện cửa sổ rồi trả False để bản này thoát."""
     global _instance_lock
     try:
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        f = open(INSTANCE_LOCK_FILE, 'a+')
+        ensure_private_dir(CONFIG_DIR)
+        f = os.fdopen(os.open(INSTANCE_LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o600), 'a+')
+        os.fchmod(f.fileno(), 0o600)            # file cũ có thể đang 0644
     except OSError as e:
         print('instance lock:', e)
         return True
@@ -1497,6 +1782,18 @@ def main():
     if '--version' in sys.argv or '-V' in sys.argv:
         print(f'VietType {APP_VERSION}')
         return
+    if '--autostart' in sys.argv:
+        # VietType --autostart status|on|off : xem/bật/tắt tự chạy khi đăng nhập, không mở cửa sổ
+        i = sys.argv.index('--autostart')
+        cmd = sys.argv[i + 1] if i + 1 < len(sys.argv) else 'status'
+        if cmd in ('on', 'off'):
+            ok = set_autostart(cmd == 'on')
+            print('autostart', cmd, 'OK' if ok else 'FAILED')
+        how = 'LaunchAgent'
+        if _mac is not None and _mac.login_item_status() is not None:
+            how = 'Login Items (status %d: 0=off 1=on 2=needs approval)' % _mac.login_item_status()
+        print('autostart:', 'on' if is_autostart() else 'off', '-', how)
+        return
     GLib.set_prgname('viettype')
     ip = icon_path()
     if ip:
@@ -1506,6 +1803,12 @@ def main():
             print('default icon:', e)
     if not acquire_single_instance():
         return
+    for p in (SAMPLES_FILE, STATE_FILE):      # file cũ (0644) -> chỉ chủ máy đọc được
+        try:
+            if os.path.exists(p):
+                os.chmod(p, 0o600)
+        except OSError:
+            pass
     try:
         migrate_autostart_mac()
     except Exception as e:
@@ -1514,14 +1817,22 @@ def main():
     w.connect('destroy', Gtk.main_quit)
     # Bản thứ hai mở ra gửi SIGUSR1: đưa cửa sổ đang chạy lên trước (kể cả khi đang ẩn/thu nhỏ)
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1,
-                         lambda *a: (w.deiconify(), w.present(), True)[-1])
+                         lambda *a: (w.set_view(VIEW_WINDOW), True)[-1])
     # Thoát thật (không ẩn xuống menu bar) khi hệ thống yêu cầu: SIGTERM (launchd,
     # đăng xuất) và Apple Event 'quit' của macOS (tắt máy, khởi động lại, Cmd+Q từ Dock).
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM,
                          lambda *a: (w.quit_app(), False)[-1])
     if _mac is not None:
         _mac.install_quit_handler(lambda: GLib.idle_add(lambda: (w.quit_app(), False)[-1]))
-    w.show_all()
+    # Mở lại đúng chế độ lần trước (cửa sổ / nút nổi / ẩn). Ngoài chế độ cửa sổ thì chỉ
+    # dựng sẵn nội dung, không hiện cửa sổ (tránh chớp cửa sổ lúc mở máy).
+    if w.view_mode == VIEW_WINDOW:
+        w.show_all()
+    else:
+        for part in (w.get_titlebar(), w.get_child()):
+            if part is not None:
+                part.show_all()
+        w.set_view(w.view_mode)
     Gtk.main()
     # Thoát từ top bar không qua delete-event: chốt bản nháp cuối
     try:
