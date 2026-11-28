@@ -21,7 +21,7 @@ PYBIN="$(brew --prefix)/bin/python3"
 "$PYBIN" -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk; print('GTK OK:', Gtk._version)"
 
 # .icns từ viettype.svg
-if [ ! -f viettype.icns ]; then
+if [ ! -f viettype.icns ] || [ viettype.svg -nt viettype.icns ]; then   # tạo lại khi đổi icon
   echo "== Tạo viettype.icns =="
   rm -rf viettype.iconset; mkdir -p viettype.iconset
   for s in 16 32 64 128 256 512; do
@@ -44,9 +44,14 @@ cp telex_engine.py history_store.py viettype_app.py mac_support.py viettype.svg 
 # VietType.app, nên Activity Monitor / Dock / LaunchServices thấy "VietType"
 # (vn.viettype.pad, native Apple Silicon) chứ không phải Python.app.
 # Không tìm thấy libpython thì exec python3; không có python3 thì báo lỗi.
-LAUNCHER_DIR="$(mktemp -d -t viettype-launcher)"; LAUNCHER_C="$LAUNCHER_DIR/launcher.c"
+# Phần native macOS (chữ trên menu bar, Login Items, nhận lệnh quit khi tắt máy,
+# đánh thức vòng lặp GTK) viết bằng Objective-C thường ở đây và xuất ra các hàm
+# vt_* để Python gọi qua ctypes — Python không tự gọi runtime Objective-C.
+LAUNCHER_DIR="$(mktemp -d -t viettype-launcher)"; LAUNCHER_C="$LAUNCHER_DIR/launcher.m"
 trap 'rm -rf "$LAUNCHER_DIR"' EXIT
 cat > "$LAUNCHER_C" <<'LAUNCHER'
+#import <Cocoa/Cocoa.h>
+#import <ServiceManagement/ServiceManagement.h>
 #include <dlfcn.h>
 #include <libgen.h>
 #include <limits.h>
@@ -55,6 +60,105 @@ cat > "$LAUNCHER_C" <<'LAUNCHER'
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+/* ===== API native cho viettype_app.py / mac_support.py (gọi qua ctypes.CDLL(None)) ===== */
+#define VT_EXPORT __attribute__((visibility("default"), used))
+typedef void (*vt_click_cb)(double x, double y);
+typedef void (*vt_void_cb)(void);
+static NSStatusItem *vt_item;
+static vt_click_cb vt_click;
+static vt_void_cb vt_quit;
+
+/* GDK chờ NSEvent; việc Python lên lịch (GLib.idle_add) từ trong một sự kiện
+   Cocoa sẽ không chạy cho tới sự kiện kế tiếp. Gửi một NSEvent ApplicationDefined
+   subtype 0 (loại GDK dùng để tự đánh thức) để vòng lặp chạy ngay. */
+VT_EXPORT void vt_wake(void) {
+    if (!NSApp) return;
+    NSEvent *e = [NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint
+                               modifierFlags:0 timestamp:0 windowNumber:0 context:nil
+                                     subtype:0 data1:0 data2:0];
+    if (e) [NSApp postEvent:e atStart:NO];
+}
+
+/* góc dưới-trái của mục menu bar, toạ độ GDK (gốc trên-trái màn hình chính) */
+VT_EXPORT int vt_status_anchor(double *x, double *y) {
+    if (!vt_item || !vt_item.button.window) return 0;
+    NSRect r = vt_item.button.window.frame;
+    NSRect m = NSScreen.screens.firstObject.frame;
+    *x = r.origin.x;
+    *y = NSMaxY(m) - r.origin.y;
+    return 1;
+}
+
+@interface VTTarget : NSObject
+@end
+@implementation VTTarget
+- (void)clicked:(id)sender {
+    double x = 0, y = 0;
+    if (!vt_click || !vt_status_anchor(&x, &y)) return;
+    vt_click(x, y);
+    vt_wake();
+}
+- (void)handleQuit:(NSAppleEventDescriptor *)ev withReplyEvent:(NSAppleEventDescriptor *)reply {
+    if (vt_quit) vt_quit();
+    vt_wake();
+}
+@end
+static VTTarget *vt_target_obj(void) {
+    static VTTarget *t;
+    if (!t) t = [VTTarget new];
+    return t;
+}
+
+/* Mục chữ trên menu bar: macOS tự vẽ cùng font/màu với menu bar (tự đổi sáng/tối). */
+VT_EXPORT int vt_status_create(const char *title, vt_click_cb cb) {
+    @autoreleasepool {
+        vt_click = cb;
+        vt_item = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
+        if (!vt_item || !vt_item.button) return 0;
+        vt_item.button.title = [NSString stringWithUTF8String:title ? title : ""];
+        vt_item.button.target = vt_target_obj();
+        vt_item.button.action = @selector(clicked:);
+        [vt_item.button sendActionOn:NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp];
+        return 1;
+    }
+}
+VT_EXPORT void vt_status_set_title(const char *t) {
+    @autoreleasepool { if (vt_item) vt_item.button.title = [NSString stringWithUTF8String:t ? t : ""]; }
+}
+VT_EXPORT void vt_status_set_tooltip(const char *t) {
+    @autoreleasepool { if (vt_item) vt_item.button.toolTip = [NSString stringWithUTF8String:t ? t : ""]; }
+}
+
+/* Apple Event 'quit' (tắt máy, khởi động lại, đăng xuất, Quit trên Dock). GTK3 không
+   xử lý nên macOS bị chặn tắt máy (lỗi -1708). */
+VT_EXPORT int vt_install_quit_handler(vt_void_cb cb) {
+    vt_quit = cb;
+    [NSAppleEventManager.sharedAppleEventManager setEventHandler:vt_target_obj()
+        andSelector:@selector(handleQuit:withReplyEvent:)
+        forEventClass:kCoreEventClass andEventID:kAEQuitApplication];
+    return 1;
+}
+
+/* Login Items (System Settings > General > Login Items). -1 = không dùng được. */
+VT_EXPORT int vt_login_status(void) {
+    if (@available(macOS 13.0, *)) return (int)SMAppService.mainAppService.status;
+    return -1;
+}
+VT_EXPORT int vt_login_set(int on, char *err, int n) {
+    if (@available(macOS 13.0, *)) {
+        NSError *e = nil;
+        SMAppService *s = SMAppService.mainAppService;
+        BOOL ok = on ? [s registerAndReturnError:&e] : [s unregisterAndReturnError:&e];
+        if (!ok && !on && s.status == SMAppServiceStatusNotRegistered) ok = YES;
+        if (!ok && err && n > 0)
+            snprintf(err, (size_t)n, "%s", e.localizedDescription.UTF8String ?: "unknown error");
+        return ok ? 1 : 0;
+    }
+    if (err && n > 0) snprintf(err, (size_t)n, "macOS 13+ required");
+    return 0;
+}
+/* ===== hết API native ===== */
 
 typedef int (*py_bytes_main_fn)(int, char **);
 
@@ -135,8 +239,9 @@ int main(int argc, char *argv[]) {
 LAUNCHER
 # rpath giống Python.app của Homebrew: typelib GTK tham chiếu dylib bằng tên trần
 # (libgobject-2.0.0.dylib), dyld tìm chúng qua LC_RPATH của file chạy chính.
-clang -O2 -Wall -Wextra -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
+clang -O2 -Wall -Wextra -fobjc-arc -arch arm64 -arch x86_64 -mmacosx-version-min=11.0 \
   -Wl,-rpath,/opt/homebrew/lib -Wl,-rpath,/usr/local/lib \
+  -framework Cocoa -weak_framework ServiceManagement \
   -o "$APP.app/Contents/MacOS/$APP" "$LAUNCHER_C"
 chmod +x "$APP.app/Contents/MacOS/$APP"
 
